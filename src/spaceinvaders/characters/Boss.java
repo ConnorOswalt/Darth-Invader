@@ -12,14 +12,23 @@ public class Boss {
     private final String themePath;
     private final String shooterSkinPath;
     private final String themeName;
+    private final boolean finalBoss;
+    private final int spawnX;
+    private final int spawnY;
+    private final long spawnTimeMs;
+    private final float patternPhase;
     private static final int BASE_SIZE = 100;
     private static final int BASE_HEALTH = 5; // Takes 5 hits to kill
 
     public Boss(int x, int y) {
-        this(x, y, null, null, null);
+        this(x, y, null, null, null, false);
     }
 
     public Boss(int x, int y, String themePath, String shooterSkinPath, String themeName) {
+        this(x, y, themePath, shooterSkinPath, themeName, false);
+    }
+
+    public Boss(int x, int y, String themePath, String shooterSkinPath, String themeName, boolean finalBoss) {
         this.x = x;
         this.y = y;
         this.size = BASE_SIZE;
@@ -28,6 +37,11 @@ public class Boss {
         this.themePath = themePath;
         this.shooterSkinPath = shooterSkinPath;
         this.themeName = themeName;
+        this.finalBoss = finalBoss;
+        this.spawnX = x;
+        this.spawnY = y;
+        this.spawnTimeMs = System.currentTimeMillis();
+        this.patternPhase = (float) ((x * 0.037) % (Math.PI * 2));
     }
 
     public int getX() {
@@ -80,5 +94,25 @@ public class Boss {
 
     public String getThemeName() {
         return themeName;
+    }
+
+    public boolean isFinalBoss() {
+        return finalBoss;
+    }
+
+    public int getSpawnX() {
+        return spawnX;
+    }
+
+    public int getSpawnY() {
+        return spawnY;
+    }
+
+    public long getSpawnTimeMs() {
+        return spawnTimeMs;
+    }
+
+    public float getPatternPhase() {
+        return patternPhase;
     }
 }

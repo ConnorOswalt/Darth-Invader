@@ -24,12 +24,14 @@ public class GameCalculator extends Thread {
     private volatile boolean running = true;
     private static final long UPDATE_INTERVAL_MS = 20; // Same as original timer interval
     private static final long FIRE_INTERVAL_MS = 150;
+    private static final long BOSS_FIRE_INTERVAL_MS = 650;
     private static final long EXPLOSION_DURATION_MS = 300;
         private static final long MODIFIER_DURATION_MS = 8000;
     private static final long POWER_UP_DURATION_MS = 8000;
     private static final long LASER_BEAM_FLASH_MS = 220;
         private static final int LASER_BEAM_HALF_WIDTH_PX = 26;
     private long lastFireTimeMs = 0;
+    private long lastBossFireTimeMs = 0;
     private long nextModifierRollMs = System.currentTimeMillis() + 15000;
     private long nextAchievementMs = System.currentTimeMillis() + 12000;
     private long nextPowerUpSpawnMs = System.currentTimeMillis() + 18000;
@@ -89,7 +91,9 @@ public class GameCalculator extends Thread {
         handleShooting();
         updateInvaderPositions();
         updateBossPositions();
+        updateBossAttacks();
         updateBulletPositions();
+        updateBossProjectilePositions();
         checkCollisions();
         checkBossCollisions();
         updateExplosions();
@@ -283,6 +287,10 @@ public class GameCalculator extends Thread {
 
     private void spawnNewInvaders() {
         synchronized (game) {
+            if (game.isFinalBossLevelActive()) {
+                return;
+            }
+
             // Difficulty multiplier increases spawn chance over time
             double spawnChance = 5 * game.getDifficultyMultiplier();
             if (game.random.nextInt(100) < spawnChance) {
@@ -449,11 +457,98 @@ public class GameCalculator extends Thread {
             Iterator<Boss> bossIterator = game.bosses.iterator();
             while (bossIterator.hasNext()) {
                 Boss boss = bossIterator.next();
+                if (boss.isFinalBoss()) {
+                    long elapsedMs = System.currentTimeMillis() - boss.getSpawnTimeMs();
+                    float t = elapsedMs / 1000.0f;
+
+                    int maxTravelX = Math.max(20, game.getWidth() - boss.getSize());
+                    int centerX = maxTravelX / 2;
+                    int swingX = Math.max(24, (int) (maxTravelX * 0.38));
+                    int patternX = (int) (centerX + Math.sin(t * 1.45 + boss.getPatternPhase()) * swingX);
+
+                    int hoverBaseY = Math.max(35, boss.getSpawnY());
+                    int hoverY = hoverBaseY
+                            + (int) (Math.sin(t * 2.1 + boss.getPatternPhase() * 0.7f) * 28)
+                            + (int) (Math.cos(t * 0.9f + boss.getPatternPhase()) * 12);
+
+                    boss.setX(Math.max(0, Math.min(maxTravelX, patternX)));
+                    boss.setY(Math.max(20, Math.min(game.getHeight() / 2, hoverY)));
+                    continue;
+                }
+
                 int y = boss.getY();
-                int step = 2; // Bosses move slower than regular invaders
+                int step = 2; // Regular bosses drift downward
                 boss.setY(y + step);
                 if (boss.getY() > game.getHeight()) {
                     bossIterator.remove();
+                }
+            }
+        }
+    }
+
+    private void updateBossAttacks() {
+        long now = System.currentTimeMillis();
+        if (now - lastBossFireTimeMs < BOSS_FIRE_INTERVAL_MS) {
+            return;
+        }
+
+        synchronized (game) {
+            if (game.bosses.isEmpty() || game.isGameOver()) {
+                return;
+            }
+
+            for (Boss boss : game.bosses) {
+                if (!boss.isFinalBoss()) {
+                    continue;
+                }
+
+                int bossCenterX = boss.getX() + boss.getSize() / 2;
+                int bossBottomY = boss.getY() + boss.getSize() - 8;
+                int shooterCenterX = game.getShooter_X_Coordinate() + game.getShooterWidth() / 2;
+
+                int dx = shooterCenterX - bossCenterX;
+                int vy = 6;
+                int vx = Math.max(-5, Math.min(5, Math.round(dx / 55.0f)));
+
+                game.bossProjectiles.add(new SpaceInvadersUI.BossProjectile(bossCenterX, bossBottomY, vx, vy, 12));
+                game.bossProjectiles.add(new SpaceInvadersUI.BossProjectile(bossCenterX - 12, bossBottomY, vx - 1, vy, 10));
+                game.bossProjectiles.add(new SpaceInvadersUI.BossProjectile(bossCenterX + 12, bossBottomY, vx + 1, vy, 10));
+            }
+        }
+
+        lastBossFireTimeMs = now;
+    }
+
+    private void updateBossProjectilePositions() {
+        synchronized (game) {
+            Iterator<SpaceInvadersUI.BossProjectile> projectileIterator = game.bossProjectiles.iterator();
+
+            int shooterX = game.getShooter_X_Coordinate();
+            int shooterY = game.getHeight() - game.getShooterHeight();
+            Rectangle shooterRect = new Rectangle(shooterX, shooterY, game.getShooterWidth(), game.getShooterHeight());
+
+            while (projectileIterator.hasNext()) {
+                SpaceInvadersUI.BossProjectile projectile = projectileIterator.next();
+                projectile.tick();
+
+                Rectangle projectileRect = new Rectangle(
+                        projectile.getX() - projectile.getSize() / 2,
+                        projectile.getY() - projectile.getSize() / 2,
+                        projectile.getSize(),
+                        projectile.getSize());
+
+                if (!game.isGameOver() && shooterRect.intersects(projectileRect)) {
+                    projectileIterator.remove();
+                    game.damagePlayer();
+                    game.triggerScreenShake(120, 5);
+                    int centerX = projectile.getX();
+                    int centerY = projectile.getY();
+                    game.explosions.add(new Explosion(centerX, centerY, 16, EXPLOSION_DURATION_MS));
+                    continue;
+                }
+
+                if (projectile.isOffScreen(game.getWidth(), game.getHeight())) {
+                    projectileIterator.remove();
                 }
             }
         }

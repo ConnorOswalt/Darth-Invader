@@ -30,6 +30,43 @@ import java.util.Random;
 import javax.swing.*;
 
 public class SpaceInvadersUI extends JPanel implements KeyListener {
+    public static class BossProjectile {
+        private int x;
+        private int y;
+        private final int vx;
+        private final int vy;
+        private final int size;
+
+        public BossProjectile(int x, int y, int vx, int vy, int size) {
+            this.x = x;
+            this.y = y;
+            this.vx = vx;
+            this.vy = vy;
+            this.size = size;
+        }
+
+        public int getX() {
+            return x;
+        }
+
+        public int getY() {
+            return y;
+        }
+
+        public int getSize() {
+            return size;
+        }
+
+        public void tick() {
+            x += vx;
+            y += vy;
+        }
+
+        public boolean isOffScreen(int width, int height) {
+            return x < -size || x > width + size || y < -size || y > height + size;
+        }
+    }
+
     public enum SillyModifier {
         NONE,
         MOON_GRAVITY,
@@ -76,6 +113,7 @@ public class SpaceInvadersUI extends JPanel implements KeyListener {
     public ArrayList<Explosion> explosions;
     public ArrayList<DeathEffect> deathEffects;
     public List<spaceinvaders.characters.PowerUp> powerUps;
+    public List<BossProjectile> bossProjectiles;
     public Random random;
     public boolean moveLeft, moveRight;
     public boolean fireHeld;
@@ -145,6 +183,8 @@ public class SpaceInvadersUI extends JPanel implements KeyListener {
     private static final int BOSS_SPAWN_MILESTONE = 30; // Spawn boss every 30 kills
     private double difficultyMultiplier = 1.0; // Scales spawn rate and speed
     private final Deque<ThemeCycleEntry> themeProgressionQueue = new ArrayDeque<>();
+    private boolean finalBossLevelActive = false;
+    private boolean finalBossSpawned = false;
 
     private static class ThemeCycleEntry {
         private final String themePath;
@@ -171,6 +211,7 @@ public class SpaceInvadersUI extends JPanel implements KeyListener {
         deathEffects = new ArrayList<>();
         bosses = new ArrayList<>();
         powerUps = new ArrayList<>();
+        bossProjectiles = new ArrayList<>();
         random = new Random();
         moveLeft = false;
         moveRight = false;
@@ -293,6 +334,9 @@ public class SpaceInvadersUI extends JPanel implements KeyListener {
 
         // Draw power-up collectibles
         paintingActions.drawPowerUps(g, this);
+
+        // Draw boss projectiles
+        paintingActions.drawBossProjectiles(g, this);
 
         // Draw bullets
         paintingActions.drawBullets(g, this);
@@ -1078,6 +1122,7 @@ public class SpaceInvadersUI extends JPanel implements KeyListener {
             explosions.clear();
             deathEffects.clear();
             powerUps.clear();
+            bossProjectiles.clear();
             bosses.clear();
             clearActivePowerUp();
             laserBeamX = -1;
@@ -1111,6 +1156,8 @@ public class SpaceInvadersUI extends JPanel implements KeyListener {
             currentThemeExpectedMusicPath = null;
             nextThemeIntegrityCheckMs = 0;
             themeProgressionQueue.clear();
+            finalBossLevelActive = false;
+            finalBossSpawned = false;
         }
 
         // Reset the current score for the new game
@@ -1184,16 +1231,30 @@ public class SpaceInvadersUI extends JPanel implements KeyListener {
         }
 
         Collections.shuffle(entries, random);
-        // Final fixed boss: Default shooter skin, then the run ends on defeat.
-        entries.add(new ThemeCycleEntry(null, DEFAULT_SHOOTER_IMAGE_PATH, "Default Final"));
         synchronized (this) {
             themeProgressionQueue.clear();
             themeProgressionQueue.addAll(entries);
+            finalBossLevelActive = false;
+            finalBossSpawned = false;
         }
     }
 
     public void handleBossDefeated(spaceinvaders.characters.Boss defeatedBoss) {
         if (defeatedBoss == null) {
+            return;
+        }
+
+        if (defeatedBoss.isFinalBoss()) {
+            addPoints(1500);
+            totalInvaderKills++;
+            difficultyMultiplier = 1.0 + (totalInvaderKills / 20) * 0.1;
+            triggerScreenShake(650, 14);
+            setAnnouncerMessage("FINAL BOSS DESTROYED!", 2600);
+            synchronized (this) {
+                finalBossLevelActive = false;
+            }
+            gameWon = true;
+            setGameOver(true);
             return;
         }
 
@@ -1227,8 +1288,7 @@ public class SpaceInvadersUI extends JPanel implements KeyListener {
 
         synchronized (this) {
             if (themeProgressionQueue.isEmpty()) {
-                gameWon = true;
-                setGameOver(true);
+                startFinalBossLevel();
             }
         }
     }
@@ -1238,6 +1298,10 @@ public class SpaceInvadersUI extends JPanel implements KeyListener {
      * Triggers boss spawn at milestones.
      */
     public void recordInvaderKill() {
+        if (finalBossLevelActive) {
+            return;
+        }
+
         totalInvaderKills++;
 
         // Update difficulty multiplier: every 20 kills, increase by 10%
@@ -1261,12 +1325,18 @@ public class SpaceInvadersUI extends JPanel implements KeyListener {
 
     public int getRemainingThemeCount() {
         synchronized (this) {
+            if (finalBossLevelActive) {
+                return gameWon ? 0 : 1;
+            }
             return themeProgressionQueue.size();
         }
     }
 
     public String getNextThemeBossName() {
         synchronized (this) {
+            if (finalBossLevelActive) {
+                return gameWon ? "NONE" : "FINAL BOSS";
+            }
             ThemeCycleEntry next = themeProgressionQueue.peekFirst();
             if (next == null || next.themeName == null || next.themeName.isBlank()) {
                 return "NONE";
@@ -1278,7 +1348,7 @@ public class SpaceInvadersUI extends JPanel implements KeyListener {
     private void spawnBoss() {
         ThemeCycleEntry nextTheme;
         synchronized (this) {
-            if (bosses.size() > 0 || themeProgressionQueue.isEmpty()) {
+            if (bosses.size() > 0 || themeProgressionQueue.isEmpty() || finalBossLevelActive || finalBossSpawned) {
                 return;
             }
             nextTheme = themeProgressionQueue.peekFirst();
@@ -1301,6 +1371,34 @@ public class SpaceInvadersUI extends JPanel implements KeyListener {
             setAnnouncerMessage("BOSS INCOMING!", 2000);
         }
         triggerScreenShake(300, 8); // Dramatic shake on boss spawn
+    }
+
+    private void startFinalBossLevel() {
+        if (finalBossSpawned || gameWon || gameOver) {
+            return;
+        }
+
+        finalBossLevelActive = true;
+        finalBossSpawned = true;
+        invaders.clear();
+        powerUps.clear();
+        bossProjectiles.clear();
+
+        int bossX = Math.max(0, (getWidth() - 100) / 2);
+        spaceinvaders.characters.Boss finalBoss = new spaceinvaders.characters.Boss(
+                bossX,
+                40,
+                null,
+                DEFAULT_SHOOTER_IMAGE_PATH,
+                "Final Boss",
+                true);
+        bosses.add(finalBoss);
+        setAnnouncerMessage("FINAL BOSS LEVEL!", 2400);
+        triggerScreenShake(500, 12);
+    }
+
+    public boolean isFinalBossLevelActive() {
+        return finalBossLevelActive;
     }
 
     /**

@@ -242,6 +242,28 @@ public class PaintingActions {
         }
     }
 
+    public void drawBossProjectiles(Graphics g, SpaceInvadersUI game) {
+        List<SpaceInvadersUI.BossProjectile> copy;
+        synchronized (game) {
+            copy = new ArrayList<>(game.bossProjectiles);
+        }
+
+        Graphics2D g2d = (Graphics2D) g;
+        g2d.setRenderingHint(RenderingHints.KEY_ANTIALIASING, RenderingHints.VALUE_ANTIALIAS_ON);
+
+        for (SpaceInvadersUI.BossProjectile projectile : copy) {
+            int size = projectile.getSize();
+            int x = projectile.getX() - size / 2;
+            int y = projectile.getY() - size / 2;
+
+            g2d.setColor(new Color(255, 90, 90, 230));
+            g2d.fillOval(x, y, size, size);
+            g2d.setColor(new Color(255, 235, 180, 220));
+            int inner = Math.max(2, size / 2);
+            g2d.fillOval(projectile.getX() - inner / 2, projectile.getY() - inner / 2, inner, inner);
+        }
+    }
+
     public void drawLaserBeam(Graphics g, SpaceInvadersUI game) {
         if (game.laserBeamX < 0 || System.currentTimeMillis() > game.laserBeamUntilMs) return;
         Graphics2D g2d = (Graphics2D) g;
