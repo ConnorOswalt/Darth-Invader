@@ -89,6 +89,7 @@ public class SpaceInvadersUI extends JPanel implements KeyListener {
     private static SpaceInvadersUI activeInstance;
     private static final String DEATH_SOUND_EFFECT_PATH = "/resources/SoundEffects/player_death.wav";
     private static final String TITLE_SCREEN_MUSIC_PATH = "/resources/Music/Space_Invaders_Title.wav";
+    private static final String FINAL_BOSS_THEME_PATH = "/resources/Themes/FinalBoss.json";
     private static final String RICK_THEME_PATH = "/resources/Themes/Rick.json";
     private static final String RICK_ROLL_MUSIC_PATH = "/resources/Music/NeverGonnaGiveYouUp.wav";
     private static final String RICK_ROLL_MUSIC_FALLBACK_PATH = "/resources/Music/Retro.wav";
@@ -1378,22 +1379,41 @@ public class SpaceInvadersUI extends JPanel implements KeyListener {
             return;
         }
 
+        String finalBossShooterPath = ThemeImplementation.readOptionalThemeResourcePath(FINAL_BOSS_THEME_PATH, "shooter");
+        String finalBossMusicPath = ThemeImplementation.readOptionalThemeResourcePath(FINAL_BOSS_THEME_PATH, "music");
+        String finalBossDeathSoundPath = ThemeImplementation.readOptionalThemeResourcePath(FINAL_BOSS_THEME_PATH, "deathsound");
+        String finalBossName = ThemeImplementation.readOptionalThemeString(FINAL_BOSS_THEME_PATH, "name");
+        if (finalBossName == null || finalBossName.isBlank()) {
+            finalBossName = "Final Boss";
+        }
+
         finalBossLevelActive = true;
         finalBossSpawned = true;
         invaders.clear();
         powerUps.clear();
         bossProjectiles.clear();
 
+        if (finalBossDeathSoundPath != null) {
+            setDeathSoundEffectPath(finalBossDeathSoundPath);
+        }
+
+        if (finalBossMusicPath != null && musicHandler != null) {
+            setCurrentThemeExpectedMusicPath(finalBossMusicPath);
+            if (hasGameStarted()) {
+                musicHandler.selectTrack(finalBossMusicPath);
+            }
+        }
+
         int bossX = Math.max(0, (getWidth() - 100) / 2);
         spaceinvaders.characters.Boss finalBoss = new spaceinvaders.characters.Boss(
                 bossX,
                 40,
-                null,
-                DEFAULT_SHOOTER_IMAGE_PATH,
-                "Final Boss",
+                FINAL_BOSS_THEME_PATH,
+                finalBossShooterPath != null ? finalBossShooterPath : DEFAULT_SHOOTER_IMAGE_PATH,
+                finalBossName,
                 true);
         bosses.add(finalBoss);
-        setAnnouncerMessage("FINAL BOSS LEVEL!", 2400);
+        setAnnouncerMessage((finalBossName + " LEVEL!").toUpperCase(), 2400);
         triggerScreenShake(500, 12);
     }
 

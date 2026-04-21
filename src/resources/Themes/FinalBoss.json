@@ -1,0 +1,6 @@
+{
+  "name": "Final Boss",
+  "shooter": "/resources/Shooter/ShooterImage.png",
+  "music": "/resources/Music/Doom.wav",
+  "deathsound": "/resources/SoundEffects/player_death.wav"
+}
