@@ -81,7 +81,6 @@ public class ThemeImplementation {
             return;
         }
 
-        game.clearTemporaryRickRestore();
         if (game.getMusicHandler() != null) {
             game.getMusicHandler().clearInterruptedTrack();
         }
@@ -204,13 +203,6 @@ public class ThemeImplementation {
                 game.setCurrentThemeExpectedMusicPath(musicPath);
                 if (!game.hasGameStarted() || game.isGameOver()) {
                     game.getMusicHandler().queueTrackWithoutPlaying(musicPath);
-                } else if (game.consumePendingRandomRickSnippet()) {
-                    game.getMusicHandler().startTemporaryOverrideFromRandomPosition(musicPath,
-                            game.getMinimumRickSnippetRemainingMs());
-                } else if (game.consumePendingResumeInterruptedTrackAfterRick()) {
-                    if (!game.getMusicHandler().resumeInterruptedTrack()) {
-                        game.getMusicHandler().selectTrack(musicPath);
-                    }
                 } else {
                     game.getMusicHandler().selectTrack(musicPath);
                 }

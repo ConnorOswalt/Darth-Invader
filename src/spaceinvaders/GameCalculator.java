@@ -25,6 +25,8 @@ public class GameCalculator extends Thread {
     private static final long UPDATE_INTERVAL_MS = 20; // Same as original timer interval
     private static final long FIRE_INTERVAL_MS = 150;
     private static final long BOSS_FIRE_INTERVAL_MS = 650;
+    private static final long REGULAR_BOSS_FIRE_INTERVAL_MS = 1500;
+    private static final long MINI_BOSS_FIRE_INTERVAL_MS = 2500;
     private static final long EXPLOSION_DURATION_MS = 300;
         private static final long MODIFIER_DURATION_MS = 8000;
     private static final long POWER_UP_DURATION_MS = 8000;
@@ -32,6 +34,8 @@ public class GameCalculator extends Thread {
         private static final int LASER_BEAM_HALF_WIDTH_PX = 26;
     private long lastFireTimeMs = 0;
     private long lastBossFireTimeMs = 0;
+    private long lastRegularBossFireTimeMs = 0;
+    private long lastMiniBossFireTimeMs = 0;
     private long nextModifierRollMs = System.currentTimeMillis() + 15000;
     private long nextAchievementMs = System.currentTimeMillis() + 12000;
     private long nextPowerUpSpawnMs = System.currentTimeMillis() + 18000;
@@ -74,7 +78,7 @@ public class GameCalculator extends Thread {
     }
 
     private void updateGameState() {
-        game.updateTemporaryRickThemeRestore();
+        game.checkThemeIntegrity();
         game.updateScreenShake();
 
         if (!game.hasGameStarted()) {
@@ -251,8 +255,10 @@ public class GameCalculator extends Thread {
                 it.remove();
                 game.recordInvaderDefeatCombo();
                 game.recordInvaderKill();
-                int points = game.getActiveSillyModifier() == SpaceInvadersUI.SillyModifier.TINY_PANIC ? 20 : 10;
-                game.addPoints(points);
+                boolean isTinyPanic = game.getActiveSillyModifier() == SpaceInvadersUI.SillyModifier.TINY_PANIC;
+                int basePoints = inv.getType() == Invader.InvaderType.TANK
+                        ? (isTinyPanic ? 50 : 25) : (isTinyPanic ? 20 : 10);
+                game.addPoints(basePoints * game.getComboMultiplier());
             }
         }
 
@@ -292,7 +298,7 @@ public class GameCalculator extends Thread {
             }
 
             // Difficulty multiplier increases spawn chance over time
-            double spawnChance = 5 * game.getDifficultyMultiplier();
+            double spawnChance = 5 * game.getDifficultyMultiplier() * game.getDifficultySpawnMultiplier();
             if (game.random.nextInt(100) < spawnChance) {
                 // Use a margin so invaders always spawn within the visible playfield
                 int spawnMargin = 50;
@@ -313,7 +319,26 @@ public class GameCalculator extends Thread {
                 // Calculate speed based on difficulty (scales from 2 to 5 pixels/update)
                 int baseSpeed = 2;
                 int difficultySpeed = (int) (baseSpeed + (game.getDifficultyMultiplier() - 1.0) * 3);
-                Invader invader = new Invader(x, 0, baseSize, false, difficultySpeed);
+                difficultySpeed = Math.max(1, (int)(difficultySpeed * game.getDifficultySpeedMultiplier()));
+
+                // Invader variety: 15% FAST, 10% TANK, rest NORMAL
+                int typeRoll = game.random.nextInt(100);
+                Invader.InvaderType invaderType;
+                int actualSpeed = difficultySpeed;
+                int actualSize = baseSize;
+                if (typeRoll < 15) {
+                    invaderType = Invader.InvaderType.FAST;
+                    actualSpeed = Math.max(2, (int)(difficultySpeed * 1.8));
+                    actualSize = Math.max(16, (int)(baseSize * 0.75));
+                } else if (typeRoll < 25) {
+                    invaderType = Invader.InvaderType.TANK;
+                    actualSize = (int)(baseSize * 1.35);
+                    actualSpeed = Math.max(1, difficultySpeed - 1);
+                } else {
+                    invaderType = Invader.InvaderType.NORMAL;
+                }
+
+                Invader invader = new Invader(x, 0, actualSize, actualSpeed, invaderType);
                 game.invaders.add(invader);
             }
         }
@@ -380,16 +405,30 @@ public class GameCalculator extends Thread {
                     if (new Rectangle(bullet.getX() - 5, bullet.getY(), 10, 10).intersects(
                             new Rectangle(invader.getX(), invader.getY(), invader.getSize(),
                                     invader.getSize()))) {
-                        addExplosionForInvader(invader);
-                        if (!bullet.isPiercing()) {
-                            bulletIterator.remove();
+                        if (invader.getType() == Invader.InvaderType.TANK && invader.getHealth() > 1) {
+                            // Damage tank but don't destroy yet
+                            invader.damage();
+                            int cx = invader.getX() + invader.getSize() / 2;
+                            int cy = invader.getY() + invader.getSize() / 2;
+                            game.explosions.add(new Explosion(cx, cy, invader.getSize() / 3, EXPLOSION_DURATION_MS));
+                            if (!bullet.isPiercing()) {
+                                bulletIterator.remove();
+                                break;
+                            }
+                        } else {
+                            addExplosionForInvader(invader);
+                            if (!bullet.isPiercing()) {
+                                bulletIterator.remove();
+                            }
+                            invaderIterator.remove();
+                            game.recordInvaderDefeatCombo();
+                            game.recordInvaderKill();
+                            boolean isTinyPanic = game.getActiveSillyModifier() == SpaceInvadersUI.SillyModifier.TINY_PANIC;
+                            int basePoints = invader.getType() == Invader.InvaderType.TANK
+                                    ? (isTinyPanic ? 50 : 25) : (isTinyPanic ? 20 : 10);
+                            game.addPoints(basePoints * game.getComboMultiplier());
+                            if (!bullet.isPiercing()) break;
                         }
-                        invaderIterator.remove();
-                        game.recordInvaderDefeatCombo();
-                        game.recordInvaderKill(); // New: triggers difficulty scaling, boss spawning, screen shake
-                        int points = game.getActiveSillyModifier() == SpaceInvadersUI.SillyModifier.TINY_PANIC ? 20 : 10;
-                        game.addPoints(points);
-                        if (!bullet.isPiercing()) break;
                     }
                 }
             }
@@ -476,6 +515,20 @@ public class GameCalculator extends Thread {
                     continue;
                 }
 
+                if (boss.isMiniBoss()) {
+                    // Float gently with a slow sine-wave pattern; never falls off screen
+                    long elapsedMs = System.currentTimeMillis() - boss.getSpawnTimeMs();
+                    float t = elapsedMs / 1000.0f;
+
+                    int maxTravelX = Math.max(20, game.getWidth() - boss.getSize());
+                    int floatX = (int) (maxTravelX / 2.0 + Math.sin(t * 0.7 + boss.getPatternPhase()) * (maxTravelX * 0.35));
+                    int floatY = 75 + (int) (Math.sin(t * 1.0 + boss.getPatternPhase() * 0.6f) * 35);
+
+                    boss.setX(Math.max(0, Math.min(maxTravelX, floatX)));
+                    boss.setY(Math.max(20, Math.min(200, floatY)));
+                    continue;
+                }
+
                 int y = boss.getY();
                 int step = 2; // Regular bosses drift downward
                 boss.setY(y + step);
@@ -488,35 +541,67 @@ public class GameCalculator extends Thread {
 
     private void updateBossAttacks() {
         long now = System.currentTimeMillis();
-        if (now - lastBossFireTimeMs < BOSS_FIRE_INTERVAL_MS) {
-            return;
-        }
 
         synchronized (game) {
             if (game.bosses.isEmpty() || game.isGameOver()) {
+                lastBossFireTimeMs = now;
+                lastRegularBossFireTimeMs = now;
+                lastMiniBossFireTimeMs = now;
                 return;
             }
 
-            for (Boss boss : game.bosses) {
-                if (!boss.isFinalBoss()) {
-                    continue;
+            // Final boss — fast, homing triple-shot
+            if (now - lastBossFireTimeMs >= BOSS_FIRE_INTERVAL_MS) {
+                for (Boss boss : game.bosses) {
+                    if (!boss.isFinalBoss()) continue;
+
+                    int bossCenterX = boss.getX() + boss.getSize() / 2;
+                    int bossBottomY = boss.getY() + boss.getSize() - 8;
+                    int shooterCenterX = game.getShooter_X_Coordinate() + game.getShooterWidth() / 2;
+
+                    int dx = shooterCenterX - bossCenterX;
+                    int vy = 6;
+                    int vx = Math.max(-5, Math.min(5, Math.round(dx / 55.0f)));
+
+                    game.bossProjectiles.add(new SpaceInvadersUI.BossProjectile(bossCenterX, bossBottomY, vx, vy, 12));
+                    game.bossProjectiles.add(new SpaceInvadersUI.BossProjectile(bossCenterX - 12, bossBottomY, vx - 1, vy, 10));
+                    game.bossProjectiles.add(new SpaceInvadersUI.BossProjectile(bossCenterX + 12, bossBottomY, vx + 1, vy, 10));
                 }
+                lastBossFireTimeMs = now;
+            }
 
-                int bossCenterX = boss.getX() + boss.getSize() / 2;
-                int bossBottomY = boss.getY() + boss.getSize() - 8;
-                int shooterCenterX = game.getShooter_X_Coordinate() + game.getShooterWidth() / 2;
+            // Theme bosses (non-final, non-mini) — slower, aimed single shot
+            if (now - lastRegularBossFireTimeMs >= REGULAR_BOSS_FIRE_INTERVAL_MS) {
+                for (Boss boss : game.bosses) {
+                    if (boss.isFinalBoss() || boss.isMiniBoss()) continue;
 
-                int dx = shooterCenterX - bossCenterX;
-                int vy = 6;
-                int vx = Math.max(-5, Math.min(5, Math.round(dx / 55.0f)));
+                    int bossCenterX = boss.getX() + boss.getSize() / 2;
+                    int bossBottomY = boss.getY() + boss.getSize() - 8;
+                    int shooterCenterX = game.getShooter_X_Coordinate() + game.getShooterWidth() / 2;
 
-                game.bossProjectiles.add(new SpaceInvadersUI.BossProjectile(bossCenterX, bossBottomY, vx, vy, 12));
-                game.bossProjectiles.add(new SpaceInvadersUI.BossProjectile(bossCenterX - 12, bossBottomY, vx - 1, vy, 10));
-                game.bossProjectiles.add(new SpaceInvadersUI.BossProjectile(bossCenterX + 12, bossBottomY, vx + 1, vy, 10));
+                    int dx = shooterCenterX - bossCenterX;
+                    int vx = Math.max(-3, Math.min(3, Math.round(dx / 80.0f)));
+                    game.bossProjectiles.add(new SpaceInvadersUI.BossProjectile(bossCenterX, bossBottomY, vx, 5, 10));
+                }
+                lastRegularBossFireTimeMs = now;
+            }
+
+            // Mini-bosses — very slow, lazily aimed single shot
+            if (now - lastMiniBossFireTimeMs >= MINI_BOSS_FIRE_INTERVAL_MS) {
+                for (Boss boss : game.bosses) {
+                    if (!boss.isMiniBoss()) continue;
+
+                    int bossCenterX = boss.getX() + boss.getSize() / 2;
+                    int bossBottomY = boss.getY() + boss.getSize() - 8;
+                    int shooterCenterX = game.getShooter_X_Coordinate() + game.getShooterWidth() / 2;
+
+                    int dx = shooterCenterX - bossCenterX;
+                    int vx = Math.max(-2, Math.min(2, Math.round(dx / 120.0f)));
+                    game.bossProjectiles.add(new SpaceInvadersUI.BossProjectile(bossCenterX, bossBottomY, vx, 3, 12));
+                }
+                lastMiniBossFireTimeMs = now;
             }
         }
-
-        lastBossFireTimeMs = now;
     }
 
     private void updateBossProjectilePositions() {

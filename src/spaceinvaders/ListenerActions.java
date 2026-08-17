@@ -35,6 +35,9 @@ public class ListenerActions {
         if (!game.hasGameStarted()) {
             if (key == KeyEvent.VK_ENTER || key == KeyEvent.VK_SPACE) {
                 game.startGameFromStarterScreen();
+            } else if (key == KeyEvent.VK_D) {
+                game.cycleDifficultyPreset();
+                game.repaint();
             }
             return;
         }

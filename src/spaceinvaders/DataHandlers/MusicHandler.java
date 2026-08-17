@@ -325,7 +325,7 @@ public class MusicHandler extends Thread {
             } else if (useSavedPosition) {
                 applySavedStartPosition(resourcePath, newClip);
             }
-            newClip.loop(Clip.LOOP_CONTINUOUSLY);
+
             crossfadeToNewClip(previous, newClip);
             closeSnapshot(previous);
             clip = newClip;
@@ -393,41 +393,58 @@ public class MusicHandler extends Thread {
     private void crossfadeToNewClip(TrackSnapshot previous, Clip newClip) {
         if (muted) {
             applyVolumeToClip(newClip);
+            newClip.loop(Clip.LOOP_CONTINUOUSLY);
             return;
         }
 
         if (!newClip.isControlSupported(FloatControl.Type.MASTER_GAIN)) {
             applyVolumeToClip(newClip);
-            newClip.start();
+            newClip.loop(Clip.LOOP_CONTINUOUSLY);
             return;
         }
 
         FloatControl gainControl = (FloatControl) newClip.getControl(FloatControl.Type.MASTER_GAIN);
         float minDb = gainControl.getMinimum();
+        float maxDb = gainControl.getMaximum();
         float targetDb = computeTargetGainDb(gainControl);
-        gainControl.setValue(minDb);
-        newClip.start();
+        // Amplitude of the fully-faded-in new track (linear scale).
+        float targetAmplitude = (targetDb <= minDb) ? 0f : (float) Math.pow(10.0, targetDb / 20.0);
 
+        // Capture the old clip's current amplitude before we touch anything,
+        // so the fade-out starts exactly where the old song is right now.
         FloatControl previousGain = null;
-        float previousStartDb = 0;
-        float previousMinDb = 0;
+        float previousAmplitude = 0f;
         if (previous != null && previous.clip != null && previous.clip.isRunning()
                 && previous.clip.isControlSupported(FloatControl.Type.MASTER_GAIN)) {
             previousGain = (FloatControl) previous.clip.getControl(FloatControl.Type.MASTER_GAIN);
-            previousStartDb = previousGain.getValue();
-            previousMinDb = previousGain.getMinimum();
+            float prevDb = previousGain.getValue();
+            float prevMin = previousGain.getMinimum();
+            previousAmplitude = (prevDb <= prevMin) ? 0f : (float) Math.pow(10.0, prevDb / 20.0);
         }
 
-        int stepDurationMs = Math.max(1, Math.max(THEME_SWITCH_FADE_OUT_MS, THEME_SWITCH_FADE_IN_MS)
-                / THEME_SWITCH_FADE_STEPS);
+        // Start the new clip silently so there is no volume pop.
+        gainControl.setValue(minDb);
+        newClip.loop(Clip.LOOP_CONTINUOUSLY);
+        // Let the audio pipeline buffer up before fading in; the old clip fills
+        // this window so the listener hears no gap.
+        sleepForFadeStep(60);
+
+        // Equal-power crossfade: fade-in uses sin(θ), fade-out uses cos(θ),
+        // where θ sweeps from 0 → π/2 over the fade duration.
+        // This keeps the combined perceived loudness constant throughout.
+        int stepDurationMs = Math.max(1,
+                Math.max(THEME_SWITCH_FADE_OUT_MS, THEME_SWITCH_FADE_IN_MS) / THEME_SWITCH_FADE_STEPS);
         for (int i = 1; i <= THEME_SWITCH_FADE_STEPS; i++) {
             float progress = i / (float) THEME_SWITCH_FADE_STEPS;
-            float db = minDb + (targetDb - minDb) * progress;
-            gainControl.setValue(Math.min(targetDb, db));
+            float angle = progress * (float) (Math.PI / 2.0);
+
+            float newAmp = targetAmplitude * (float) Math.sin(angle);
+            gainControl.setValue(amplitudeToDb(newAmp, minDb, maxDb));
 
             if (previousGain != null) {
-                float prevDb = previousStartDb + (previousMinDb - previousStartDb) * progress;
-                previousGain.setValue(Math.max(previousMinDb, prevDb));
+                float prevAmp = previousAmplitude * (float) Math.cos(angle);
+                previousGain.setValue(
+                        amplitudeToDb(prevAmp, previousGain.getMinimum(), previousGain.getMaximum()));
             }
 
             sleepForFadeStep(stepDurationMs);
@@ -435,51 +452,67 @@ public class MusicHandler extends Thread {
     }
 
     private void crossfadeToNewMidiTrack(TrackSnapshot previous, Sequencer sequencer, Synthesizer synthesizer) {
+        int targetVolume = Math.max(0, Math.min(127, Math.round((volumePercent / 100.0f) * 127)));
+
         if (muted) {
-            applyVolumeToCurrentTrack();
+            setMidiChannelVolume(synthesizer, 0);
+            sequencer.start();
             return;
         }
 
-        int targetVolume = Math.max(0, Math.min(127, Math.round((volumePercent / 100.0f) * 127)));
+        // Capture the previous track's state before starting anything, so both
+        // fade-out curves begin from the actual playing level.
+        int previousMidiVolume = 0;
+        boolean hasPreviousMidi = previous != null && previous.synthesizer != null
+                && previous.synthesizer.isOpen();
+        if (hasPreviousMidi) {
+            // Old MIDI was set to targetVolume by the same formula, so use that as the start.
+            previousMidiVolume = targetVolume;
+        }
+
+        FloatControl previousClipGain = null;
+        float previousClipAmplitude = 0f;
+        if (previous != null && previous.clip != null && previous.clip.isRunning()
+                && previous.clip.isControlSupported(FloatControl.Type.MASTER_GAIN)) {
+            previousClipGain = (FloatControl) previous.clip.getControl(FloatControl.Type.MASTER_GAIN);
+            float prevDb = previousClipGain.getValue();
+            float prevMin = previousClipGain.getMinimum();
+            previousClipAmplitude = (prevDb <= prevMin) ? 0f : (float) Math.pow(10.0, prevDb / 20.0);
+        }
+
+        // Start the new MIDI track silently.
         setMidiChannelVolume(synthesizer, 0);
         sequencer.start();
+        // Pre-warm: let the MIDI sequencer buffer up while the old track still plays.
+        sleepForFadeStep(60);
 
-        int stepDurationMs = Math.max(1, Math.max(THEME_SWITCH_FADE_OUT_MS, THEME_SWITCH_FADE_IN_MS)
-                / THEME_SWITCH_FADE_STEPS);
+        // Equal-power crossfade (same sin/cos approach as clip crossfade).
+        int stepDurationMs = Math.max(1,
+                Math.max(THEME_SWITCH_FADE_OUT_MS, THEME_SWITCH_FADE_IN_MS) / THEME_SWITCH_FADE_STEPS);
         for (int i = 1; i <= THEME_SWITCH_FADE_STEPS; i++) {
             float progress = i / (float) THEME_SWITCH_FADE_STEPS;
-            int volume = Math.max(0, Math.min(targetVolume, Math.round(targetVolume * progress)));
-            setMidiChannelVolume(synthesizer, volume);
+            float angle = progress * (float) (Math.PI / 2.0);
 
-            applyFadeOutToSnapshot(previous, progress);
+            int newVol = (int) Math.round(targetVolume * Math.sin(angle));
+            setMidiChannelVolume(synthesizer, Math.max(0, Math.min(127, newVol)));
+
+            if (hasPreviousMidi) {
+                int prevVol = (int) Math.round(previousMidiVolume * Math.cos(angle));
+                setMidiChannelVolume(previous.synthesizer, Math.max(0, Math.min(127, prevVol)));
+            }
+
+            if (previousClipGain != null) {
+                float prevAmp = previousClipAmplitude * (float) Math.cos(angle);
+                previousClipGain.setValue(
+                        amplitudeToDb(prevAmp, previousClipGain.getMinimum(), previousClipGain.getMaximum()));
+            }
+
             sleepForFadeStep(stepDurationMs);
         }
     }
 
     private TrackSnapshot snapshotCurrentTrack() {
         return new TrackSnapshot(clip, midiSequencer, midiSynthesizer);
-    }
-
-    private void applyFadeOutToSnapshot(TrackSnapshot snapshot, float progress) {
-        if (snapshot == null || !snapshot.hasAudio()) {
-            return;
-        }
-
-        if (snapshot.clip != null && snapshot.clip.isRunning()
-                && snapshot.clip.isControlSupported(FloatControl.Type.MASTER_GAIN)) {
-            FloatControl gain = (FloatControl) snapshot.clip.getControl(FloatControl.Type.MASTER_GAIN);
-            float min = gain.getMinimum();
-            float start = gain.getValue();
-            float next = start + (min - start) * progress;
-            gain.setValue(Math.max(min, next));
-            return;
-        }
-
-        if (snapshot.synthesizer != null && snapshot.synthesizer.isOpen()) {
-            int startVolume = Math.max(0, Math.min(127, Math.round((volumePercent / 100.0f) * 127)));
-            int nextVolume = Math.max(0, Math.round(startVolume * (1.0f - progress)));
-            setMidiChannelVolume(snapshot.synthesizer, nextVolume);
-        }
     }
 
     private void closeSnapshot(TrackSnapshot snapshot) {
@@ -530,6 +563,18 @@ public class MusicHandler extends Thread {
         } catch (InterruptedException e) {
             Thread.currentThread().interrupt();
         }
+    }
+
+    /**
+     * Converts a linear amplitude (0.0 – 1.0+) to decibels, clamped to the
+     * range [minDb, maxDb].  Returns minDb for zero or negative amplitudes.
+     */
+    private float amplitudeToDb(float amplitude, float minDb, float maxDb) {
+        if (amplitude <= 0f) {
+            return minDb;
+        }
+        float db = 20.0f * (float) Math.log10(amplitude);
+        return Math.max(minDb, Math.min(maxDb, db));
     }
 
     private void applyExplicitStartPosition(Clip targetClip, long startPositionUs) {

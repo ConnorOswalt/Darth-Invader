@@ -1,24 +1,28 @@
 package spaceinvaders.characters;
 
 public class Invader {
+    public enum InvaderType { NORMAL, FAST, TANK }
+
     private int x, y, size;
-    private final boolean rickRollTarget;
     private int speedPixelsPerUpdate;
+    private final InvaderType type;
+    private int health;
 
     public Invader(int x, int y, int size) {
-        this(x, y, size, false, 2);
+        this(x, y, size, 2, InvaderType.NORMAL);
     }
 
-    public Invader(int x, int y, int size, boolean rickRollTarget) {
-        this(x, y, size, rickRollTarget, 2);
+    public Invader(int x, int y, int size, int speed) {
+        this(x, y, size, speed, InvaderType.NORMAL);
     }
 
-    public Invader(int x, int y, int size, boolean rickRollTarget, int speed) {
+    public Invader(int x, int y, int size, int speed, InvaderType type) {
         this.x = x;
         this.y = y;
         this.size = size;
-        this.rickRollTarget = rickRollTarget;
         this.speedPixelsPerUpdate = speed;
+        this.type = type;
+        this.health = type == InvaderType.TANK ? 2 : 1;
     }
 
     public int getX() {
@@ -45,15 +49,23 @@ public class Invader {
         this.size = size;
     }
 
-    public boolean isRickRollTarget() {
-        return rickRollTarget;
-    }
-
     public int getSpeed() {
         return speedPixelsPerUpdate;
     }
 
     public void setSpeed(int speed) {
         this.speedPixelsPerUpdate = speed;
+    }
+
+    public InvaderType getType() {
+        return type;
+    }
+
+    public int getHealth() {
+        return health;
+    }
+
+    public void damage() {
+        health = Math.max(0, health - 1);
     }
 }

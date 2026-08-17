@@ -86,24 +86,18 @@ public class SpaceInvadersUI extends JPanel implements KeyListener {
         LASER_BEAM
     }
 
+    public enum DifficultyPreset { EASY, NORMAL, HARD }
+    private DifficultyPreset difficultyPreset = DifficultyPreset.NORMAL;
+
     private static SpaceInvadersUI activeInstance;
     private static final String DEATH_SOUND_EFFECT_PATH = "/resources/SoundEffects/player_death.wav";
     private static final String TITLE_SCREEN_MUSIC_PATH = "/resources/Music/Space_Invaders_Title.wav";
     private static final String FINAL_BOSS_THEME_PATH = "/resources/Themes/FinalBoss.json";
-    private static final String RICK_THEME_PATH = "/resources/Themes/Rick.json";
-    private static final String RICK_ROLL_MUSIC_PATH = "/resources/Music/NeverGonnaGiveYouUp.wav";
-    private static final String RICK_ROLL_MUSIC_FALLBACK_PATH = "/resources/Music/Retro.wav";
-    private static final String RICK_ROLL_BACKGROUND_PATH = "/resources/Background/RickAstleyDance.gif";
-    private static final String RICK_ROLL_BACKGROUND_FALLBACK_PATH = "/resources/Background/peterWriting.gif";
-    private static final long MIN_TEMPORARY_RICK_THEME_DURATION_MS = 3000;
-    private static final long TEMPORARY_RICK_THEME_DURATION_RANGE_MS = 5000;
-    private static final long MINIMUM_RICK_SNIPPET_REMAINING_MS = 8000;
         private static final String DEFAULT_THEME_PATH = "/resources/Themes/Default.json";
     private static final String DEFAULT_SHOOTER_IMAGE_PATH = "/resources/Shooter/ShooterImage.png";
         private static final String[] THEME_PROGRESSION_PATHS = {
             "/resources/Themes/Doom.json",
             "/resources/Themes/Family_Guy.json",
-                "/resources/Themes/Rick.json",
             "/resources/Themes/Retro.json",
             "/resources/Themes/Sabaton.json"
         };
@@ -164,12 +158,6 @@ public class SpaceInvadersUI extends JPanel implements KeyListener {
     private int comboCount = 0;
     private long comboWindowUntilMs = 0;
     private String currentThemePath;
-    private String temporaryRickRestoreThemePath;
-    private long temporaryRickRestoreAtMs = 0;
-    private boolean temporaryRickRestoreToDefaultState = false;
-    private long rickMusicExpectedStopByMs = 0;
-    private boolean pendingRandomRickSnippet = false;
-    private boolean pendingResumeInterruptedTrackAfterRick = false;
 
     // Theme integrity checker
     private String currentThemeExpectedMusicPath;
@@ -181,11 +169,12 @@ public class SpaceInvadersUI extends JPanel implements KeyListener {
     private long screenShakeEndTimeMs = 0;
     private int totalInvaderKills = 0;
     public ArrayList<spaceinvaders.characters.Boss> bosses;
-    private static final int BOSS_SPAWN_MILESTONE = 30; // Spawn boss every 30 kills
+    private static final int BOSS_SPAWN_MILESTONE = 30; // Spawn mini-boss every 30 kills
     private double difficultyMultiplier = 1.0; // Scales spawn rate and speed
     private final Deque<ThemeCycleEntry> themeProgressionQueue = new ArrayDeque<>();
     private boolean finalBossLevelActive = false;
     private boolean finalBossSpawned = false;
+    private int miniBossKillCount = 0; // Tracks kills toward the next theme boss
 
     private static class ThemeCycleEntry {
         private final String themePath;
@@ -311,14 +300,8 @@ public class SpaceInvadersUI extends JPanel implements KeyListener {
             g2d.setTransform(originalTransform);
             return;
         }
-        
-        if (paused) {
-            drawPauseScreen(g);
-            g2d.setTransform(originalTransform);
-            return;
-        }
 
-        // Draw shooter (rectangle)
+        // Draw shooter
         paintingActions.drawShooter(g, this);
 
         // Draw falling invaders (as images)
@@ -356,6 +339,11 @@ public class SpaceInvadersUI extends JPanel implements KeyListener {
 
         // Restore transform before drawing overlay
         g2d.setTransform(originalTransform);
+
+        if (paused) {
+            drawPauseScreen(g);
+            return;
+        }
 
         drawSillyOverlay(g);
     }
@@ -555,15 +543,14 @@ public class SpaceInvadersUI extends JPanel implements KeyListener {
 
     /**
      * Periodically verifies that the active theme's music is still playing.
-     * If it has drifted (e.g. Rick Roll didn't clean up), re-applies the theme.
-     * Only runs when a non-Rick theme is active.
+     * If it has drifted, re-applies the theme.
      */
-    private void checkThemeIntegrity(long now) {
+    public void checkThemeIntegrity() {
+        long now = System.currentTimeMillis();
         if (now < nextThemeIntegrityCheckMs) return;
         nextThemeIntegrityCheckMs = now + 3000;
 
-        // Only verify when a real theme is set and we're not mid-Rick-Roll
-        if (currentThemePath == null || currentThemePath.isBlank() || isRickRollActive()) return;
+        if (currentThemePath == null || currentThemePath.isBlank()) return;
 
         // Only check if this theme specifies music (music_enabled: false themes have no expected track)
         if (currentThemeExpectedMusicPath == null) return;
@@ -572,115 +559,6 @@ public class SpaceInvadersUI extends JPanel implements KeyListener {
         if (musicHandler != null && !musicHandler.isTrackActive(currentThemeExpectedMusicPath)) {
             ThemeImplementation.requestThemeChange(this, currentThemePath);
         }
-    }
-
-    public boolean isRickRollActive() {
-        return RICK_THEME_PATH.equals(currentThemePath) || temporaryRickRestoreAtMs > 0;
-    }
-
-    public boolean consumePendingRandomRickSnippet() {
-        boolean shouldUseRandomSnippet = pendingRandomRickSnippet;
-        pendingRandomRickSnippet = false;
-        return shouldUseRandomSnippet;
-    }
-
-    public boolean consumePendingResumeInterruptedTrackAfterRick() {
-        boolean shouldResumeInterruptedTrack = pendingResumeInterruptedTrackAfterRick;
-        pendingResumeInterruptedTrackAfterRick = false;
-        return shouldResumeInterruptedTrack;
-    }
-
-    public long getMinimumRickSnippetRemainingMs() {
-        return MINIMUM_RICK_SNIPPET_REMAINING_MS;
-    }
-
-    public void clearTemporaryRickRestore() {
-        clearRickRestoreSnapshot();
-        rickMusicExpectedStopByMs = 0;
-        pendingRandomRickSnippet = false;
-        pendingResumeInterruptedTrackAfterRick = false;
-    }
-
-    private void clearRickRestoreSnapshot() {
-        temporaryRickRestoreThemePath = null;
-        temporaryRickRestoreAtMs = 0;
-        temporaryRickRestoreToDefaultState = false;
-    }
-
-    private void saveCurrentThemeBeforeRickRoll(long restoreAtMs) {
-        if (currentThemePath != null && !currentThemePath.isBlank()) {
-            temporaryRickRestoreThemePath = currentThemePath;
-            temporaryRickRestoreToDefaultState = false;
-        } else {
-            temporaryRickRestoreThemePath = null;
-            temporaryRickRestoreToDefaultState = true;
-        }
-        temporaryRickRestoreAtMs = restoreAtMs;
-        rickMusicExpectedStopByMs = restoreAtMs + 1500;
-    }
-
-    public void updateTemporaryRickThemeRestore() {
-        long now = System.currentTimeMillis();
-        runRickRollMusicFailsafe(now);
-        checkThemeIntegrity(now);
-
-        if ((!temporaryRickRestoreToDefaultState && temporaryRickRestoreThemePath == null)
-                || now < temporaryRickRestoreAtMs) {
-            return;
-        }
-
-        boolean restoreDefaultState = temporaryRickRestoreToDefaultState;
-        String restoreThemePath = temporaryRickRestoreThemePath;
-        boolean shouldResumeInterruptedTrack = pendingResumeInterruptedTrackAfterRick;
-        clearRickRestoreSnapshot();
-        pendingRandomRickSnippet = false;
-        if (restoreDefaultState) {
-            pendingResumeInterruptedTrackAfterRick = false;
-            imageSelection.restoreDefaultThemeState(this);
-            currentThemePath = null;
-            setDeathSoundEnabled(true);
-            setDeathSoundLooping(false);
-            setDeathSoundEffectPath(DEATH_SOUND_EFFECT_PATH);
-            clearDeathExplosionSoundEffectPath();
-            if (musicHandler != null) {
-                if (shouldResumeInterruptedTrack && !musicHandler.resumeInterruptedTrack()) {
-                    musicHandler.stopCurrentTrack();
-                } else if (!shouldResumeInterruptedTrack) {
-                    musicHandler.stopCurrentTrack();
-                }
-            }
-            repaint();
-            return;
-        }
-
-        ThemeImplementation.requestThemeChange(this, restoreThemePath);
-    }
-
-    private void runRickRollMusicFailsafe(long now) {
-        if (rickMusicExpectedStopByMs <= 0 || now < rickMusicExpectedStopByMs || musicHandler == null) {
-            return;
-        }
-
-        boolean rickTrackStillActive = false;
-        if (SpaceInvadersUI.class.getResource(RICK_ROLL_MUSIC_PATH) != null) {
-            rickTrackStillActive |= musicHandler.isTrackActive(RICK_ROLL_MUSIC_PATH);
-        }
-        if (SpaceInvadersUI.class.getResource(RICK_ROLL_MUSIC_FALLBACK_PATH) != null) {
-            rickTrackStillActive |= musicHandler.isTrackActive(RICK_ROLL_MUSIC_FALLBACK_PATH);
-        }
-
-        if (!rickTrackStillActive) {
-            rickMusicExpectedStopByMs = 0;
-            return;
-        }
-
-        // Extra guard: if Rick song is still active after expiry, force restore.
-        if (currentThemePath != null && !currentThemePath.isBlank() && !RICK_THEME_PATH.equals(currentThemePath)) {
-            ThemeImplementation.requestThemeChange(this, currentThemePath);
-        } else {
-            musicHandler.stopCurrentTrack();
-        }
-        rickMusicExpectedStopByMs = 0;
     }
 
     public boolean isSillinessModeEnabled() {
@@ -787,6 +665,12 @@ public class SpaceInvadersUI extends JPanel implements KeyListener {
         return "Double Bonk";
     }
 
+    public int getComboMultiplier() {
+        if (comboCount >= 5) return 3;
+        if (comboCount >= 2) return 2;
+        return 1;
+    }
+
     public void setDeathSoundEffectPath(String deathSoundEffectPath) {
         if (deathSoundEffectPath == null || deathSoundEffectPath.isBlank()) {
             this.deathSoundEffectPath = DEATH_SOUND_EFFECT_PATH;
@@ -819,34 +703,6 @@ public class SpaceInvadersUI extends JPanel implements KeyListener {
         return deathExplosionSoundEffectPath;
     }
 
-    public void handleRickRollKill() {
-        if (RICK_THEME_PATH.equals(currentThemePath)) {
-            return;
-        }
-
-        if (SpaceInvadersUI.class.getResource(RICK_THEME_PATH) != null) {
-            long randomRickDurationMs = MIN_TEMPORARY_RICK_THEME_DURATION_MS
-                    + random.nextInt((int) TEMPORARY_RICK_THEME_DURATION_RANGE_MS + 1);
-            saveCurrentThemeBeforeRickRoll(System.currentTimeMillis() + randomRickDurationMs);
-            pendingRandomRickSnippet = true;
-            pendingResumeInterruptedTrackAfterRick = true;
-            ThemeImplementation.requestThemeChange(this, RICK_THEME_PATH);
-            return;
-        }
-
-        String musicPath = resolveExistingResource(RICK_ROLL_MUSIC_PATH, RICK_ROLL_MUSIC_FALLBACK_PATH);
-        if (musicPath != null && musicHandler != null) {
-            musicHandler.selectTrack(musicPath);
-        }
-
-        String backgroundPath = resolveExistingResource(RICK_ROLL_BACKGROUND_PATH, RICK_ROLL_BACKGROUND_FALLBACK_PATH);
-        if (backgroundPath != null) {
-            imageSelection.setBackgroundImageFromResourcePath(backgroundPath);
-        }
-
-        repaint();
-    }
-
     public boolean isExplosionsEnabled() {
         return explosionsEnabled;
     }
@@ -873,7 +729,8 @@ public class SpaceInvadersUI extends JPanel implements KeyListener {
             return;
         }
 
-        playerHealth = Math.min(MAX_PLAYER_HEALTH, playerHealth + INVADER_KILL_HEAL);
+        int healAmount = Math.round(INVADER_KILL_HEAL * getDifficultyHealMultiplier());
+        playerHealth = Math.min(MAX_PLAYER_HEALTH, playerHealth + healAmount);
     }
 
     public void damagePlayer() {
@@ -881,7 +738,8 @@ public class SpaceInvadersUI extends JPanel implements KeyListener {
             return;
         }
 
-        playerHealth = Math.max(0, playerHealth - PLAYER_HIT_DAMAGE);
+        int damage = Math.round(PLAYER_HIT_DAMAGE * getDifficultyDamageMultiplier());
+        playerHealth = Math.max(0, playerHealth - damage);
         playerFlashing = true;
         playerFlashStartTime = System.currentTimeMillis();
         repaint();
@@ -1048,6 +906,19 @@ public class SpaceInvadersUI extends JPanel implements KeyListener {
         int controlsX = panelX + (panelWidth - controlsMetrics.stringWidth(controls)) / 2;
         g2d.setColor(new Color(190, 215, 255));
         g2d.drawString(controls, controlsX, panelY + panelHeight - 52);
+
+        // Difficulty selector
+        g2d.setFont(new Font("Arial", Font.BOLD, 15));
+        Color diffColor = switch (difficultyPreset) {
+            case EASY  -> new Color(80, 220, 110);
+            case HARD  -> new Color(255, 110, 110);
+            default    -> new Color(255, 220, 90);
+        };
+        String diffText = "[D] Difficulty: " + difficultyPreset.name();
+        FontMetrics diffFm = g2d.getFontMetrics();
+        int diffX = panelX + (panelWidth - diffFm.stringWidth(diffText)) / 2;
+        g2d.setColor(diffColor);
+        g2d.drawString(diffText, diffX, panelY + panelHeight - 26);
     }
 
     private void drawGameOver(Graphics g) {
@@ -1105,7 +976,37 @@ public class SpaceInvadersUI extends JPanel implements KeyListener {
         String restartText = gameWon ? "Press R to play again" : "Press R to restart";
         textWidth = fm.stringWidth(restartText);
         int restartX = (getWidth() - textWidth) / 2;
-        int restartY = (getHeight() + textHeight) / 2 + 60;
+        int restartY = (getHeight() + textHeight) / 2 + 115;
+
+        // Draw final score
+        int finalScore = scoreManager.getCurrentScore();
+        g2d.setFont(new Font("Arial", Font.BOLD, 28));
+        FontMetrics scoreFm = g2d.getFontMetrics();
+        String finalScoreText = "Score: " + finalScore;
+        int scoreTextX = (getWidth() - scoreFm.stringWidth(finalScoreText)) / 2;
+        int scoreTextY = (getHeight() + textHeight) / 2 + 52;
+        g2d.setColor(new Color(0, 0, 0, 170));
+        g2d.drawString(finalScoreText, scoreTextX + 2, scoreTextY + 2);
+        g2d.setColor(Color.WHITE);
+        g2d.drawString(finalScoreText, scoreTextX, scoreTextY);
+
+        // New high score indicator
+        java.util.List<spaceinvaders.scores.ScoreEntry> lb = scoreManager.getLeaderboard();
+        int topScore = lb.isEmpty() ? 0 : lb.get(0).getScore();
+        if (finalScore > 0 && finalScore >= topScore) {
+            g2d.setFont(new Font("Arial", Font.BOLD, 20));
+            FontMetrics hsFm = g2d.getFontMetrics();
+            String hsText = "NEW HIGH SCORE!";
+            int hsX = (getWidth() - hsFm.stringWidth(hsText)) / 2;
+            int hsY = scoreTextY + 34;
+            g2d.setColor(new Color(0, 0, 0, 160));
+            g2d.drawString(hsText, hsX + 2, hsY + 2);
+            g2d.setColor(new Color(255, 215, 0));
+            g2d.drawString(hsText, hsX, hsY);
+        }
+
+        g2d.setFont(new Font("Arial", Font.PLAIN, 24));
+        fm = g2d.getFontMetrics();
         
         // Draw shadow for restart text
         g2d.setColor(new Color(0, 0, 0, 150)); // Dark shadow
@@ -1259,6 +1160,25 @@ public class SpaceInvadersUI extends JPanel implements KeyListener {
             return;
         }
 
+        if (defeatedBoss.isMiniBoss()) {
+            addPoints(200);
+            totalInvaderKills++;
+            difficultyMultiplier = 1.0 + (totalInvaderKills / 20) * 0.1;
+            triggerScreenShake(300, 7);
+            synchronized (this) {
+                miniBossKillCount++;
+                int remaining = 5 - (miniBossKillCount % 5);
+                if (miniBossKillCount % 5 == 0) {
+                    setAnnouncerMessage("5 MINI-BOSSES DOWN! BOSS INCOMING!", 2200);
+                    spawnThemeBoss();
+                    miniBossKillCount = 0;
+                } else {
+                    setAnnouncerMessage("MINI-BOSS DOWN! " + remaining + " MORE TO BOSS!", 2000);
+                }
+            }
+            return;
+        }
+
         addPoints(500);
         totalInvaderKills++;
         difficultyMultiplier = 1.0 + (totalInvaderKills / 20) * 0.1;
@@ -1308,12 +1228,13 @@ public class SpaceInvadersUI extends JPanel implements KeyListener {
         // Update difficulty multiplier: every 20 kills, increase by 10%
         difficultyMultiplier = 1.0 + (totalInvaderKills / 20) * 0.1;
 
-        // Spawn boss at milestones (every 30 kills)
+        // Spawn mini-boss at milestones (every 30 kills)
         if (totalInvaderKills % BOSS_SPAWN_MILESTONE == 0 && totalInvaderKills > 0) {
-            spawnBoss();
+            spawnMiniBoss();
         }
 
         triggerScreenShake(200, 4); // Shake camera on invader kill
+        healPlayerFromInvaderKill();
     }
 
     public int getTotalInvaderKills() {
@@ -1322,6 +1243,50 @@ public class SpaceInvadersUI extends JPanel implements KeyListener {
 
     public double getDifficultyMultiplier() {
         return difficultyMultiplier;
+    }
+
+    public DifficultyPreset getDifficultyPreset() {
+        return difficultyPreset;
+    }
+
+    public void cycleDifficultyPreset() {
+        difficultyPreset = switch (difficultyPreset) {
+            case EASY -> DifficultyPreset.NORMAL;
+            case NORMAL -> DifficultyPreset.HARD;
+            case HARD -> DifficultyPreset.EASY;
+        };
+    }
+
+    public float getDifficultySpawnMultiplier() {
+        return switch (difficultyPreset) {
+            case EASY -> 0.65f;
+            case HARD -> 1.45f;
+            default -> 1.0f;
+        };
+    }
+
+    public float getDifficultySpeedMultiplier() {
+        return switch (difficultyPreset) {
+            case EASY -> 0.70f;
+            case HARD -> 1.30f;
+            default -> 1.0f;
+        };
+    }
+
+    public float getDifficultyDamageMultiplier() {
+        return switch (difficultyPreset) {
+            case EASY -> 0.50f;
+            case HARD -> 1.50f;
+            default -> 1.0f;
+        };
+    }
+
+    public float getDifficultyHealMultiplier() {
+        return switch (difficultyPreset) {
+            case EASY -> 2.0f;
+            case HARD -> 0.50f;
+            default -> 1.0f;
+        };
     }
 
     public int getRemainingThemeCount() {
@@ -1346,16 +1311,41 @@ public class SpaceInvadersUI extends JPanel implements KeyListener {
         }
     }
 
-    private void spawnBoss() {
+    private void spawnMiniBoss() {
+        synchronized (this) {
+            if (finalBossLevelActive || themeProgressionQueue.isEmpty()) {
+                return;
+            }
+            // Only one mini-boss active at a time
+            for (spaceinvaders.characters.Boss b : bosses) {
+                if (b.isMiniBoss()) return;
+            }
+        }
+
+        int bossX = random.nextInt(Math.max(1, getWidth() - 70));
+        spaceinvaders.characters.Boss miniBoss = new spaceinvaders.characters.Boss(
+                bossX, -70, null, null, null, false, true);
+        synchronized (this) {
+            bosses.add(miniBoss);
+        }
+        setAnnouncerMessage("MINI-BOSS INCOMING!", 2000);
+        triggerScreenShake(200, 6);
+    }
+
+    private void spawnThemeBoss() {
         ThemeCycleEntry nextTheme;
         synchronized (this) {
-            if (bosses.size() > 0 || themeProgressionQueue.isEmpty() || finalBossLevelActive || finalBossSpawned) {
+            if (themeProgressionQueue.isEmpty() || finalBossLevelActive || finalBossSpawned) {
                 return;
+            }
+            // Don't spawn a second theme boss if one is already active
+            for (spaceinvaders.characters.Boss b : bosses) {
+                if (!b.isMiniBoss() && !b.isFinalBoss()) return;
             }
             nextTheme = themeProgressionQueue.peekFirst();
         }
 
-        // Spawn boss at random x position at top
+        // Spawn theme boss at random x position at top
         int bossX = random.nextInt(Math.max(1, getWidth() - 100));
         spaceinvaders.characters.Boss boss = new spaceinvaders.characters.Boss(
                 bossX,
@@ -1371,7 +1361,7 @@ public class SpaceInvadersUI extends JPanel implements KeyListener {
         } else {
             setAnnouncerMessage("BOSS INCOMING!", 2000);
         }
-        triggerScreenShake(300, 8); // Dramatic shake on boss spawn
+        triggerScreenShake(300, 8);
     }
 
     private void startFinalBossLevel() {
@@ -1469,16 +1459,6 @@ public class SpaceInvadersUI extends JPanel implements KeyListener {
         }
 
         musicHandler.selectTrack(TITLE_SCREEN_MUSIC_PATH);
-    }
-
-    private String resolveExistingResource(String preferredPath, String fallbackPath) {
-        if (SpaceInvadersUI.class.getResource(preferredPath) != null) {
-            return preferredPath;
-        }
-        if (SpaceInvadersUI.class.getResource(fallbackPath) != null) {
-            return fallbackPath;
-        }
-        return null;
     }
 
 }

@@ -13,26 +13,35 @@ public class Boss {
     private final String shooterSkinPath;
     private final String themeName;
     private final boolean finalBoss;
+    private final boolean miniBoss;
     private final int spawnX;
     private final int spawnY;
     private final long spawnTimeMs;
     private final float patternPhase;
     private static final int BASE_SIZE = 100;
     private static final int BASE_HEALTH = 5; // Takes 5 hits to kill
+    private static final int FINAL_BOSS_HEALTH = 20; // Final boss takes 20 hits to kill
+    private static final int MINI_BOSS_SIZE = 70;
+    private static final int MINI_BOSS_HEALTH = 3;
 
     public Boss(int x, int y) {
-        this(x, y, null, null, null, false);
+        this(x, y, null, null, null, false, false);
     }
 
     public Boss(int x, int y, String themePath, String shooterSkinPath, String themeName) {
-        this(x, y, themePath, shooterSkinPath, themeName, false);
+        this(x, y, themePath, shooterSkinPath, themeName, false, false);
     }
 
     public Boss(int x, int y, String themePath, String shooterSkinPath, String themeName, boolean finalBoss) {
+        this(x, y, themePath, shooterSkinPath, themeName, finalBoss, false);
+    }
+
+    public Boss(int x, int y, String themePath, String shooterSkinPath, String themeName, boolean finalBoss, boolean miniBoss) {
         this.x = x;
         this.y = y;
-        this.size = BASE_SIZE;
-        this.maxHealth = BASE_HEALTH;
+        this.miniBoss = miniBoss;
+        this.size = miniBoss ? MINI_BOSS_SIZE : BASE_SIZE;
+        this.maxHealth = finalBoss ? FINAL_BOSS_HEALTH : (miniBoss ? MINI_BOSS_HEALTH : BASE_HEALTH);
         this.health = maxHealth;
         this.themePath = themePath;
         this.shooterSkinPath = shooterSkinPath;
@@ -98,6 +107,10 @@ public class Boss {
 
     public boolean isFinalBoss() {
         return finalBoss;
+    }
+
+    public boolean isMiniBoss() {
+        return miniBoss;
     }
 
     public int getSpawnX() {

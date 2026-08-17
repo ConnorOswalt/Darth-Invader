@@ -66,15 +66,31 @@ public class PaintingActions {
             invadersCopy = new ArrayList<>(game.invaders);
         }
 
-        Image rickInvaderImage = game.imageSelection.getRickInvaderImage();
-        
+        Graphics2D g2d = (Graphics2D) g;
+        Stroke originalStroke = g2d.getStroke();
+
         for (Invader invader : invadersCopy) {
-            Image imageToDraw = invader.isRickRollTarget() && rickInvaderImage != null
-                    ? rickInvaderImage
-                    : invaderImage;
-            g.drawImage(imageToDraw, invader.getX(), invader.getY(), invader.getSize(),
+            g.drawImage(invaderImage, invader.getX(), invader.getY(), invader.getSize(),
                     invader.getSize(), game);
+
+            // Visual type indicators
+            if (invader.getType() == Invader.InvaderType.FAST) {
+                g2d.setColor(new Color(0, 220, 255, 190));
+                g2d.setStroke(new BasicStroke(2));
+                g2d.drawRect(invader.getX(), invader.getY(), invader.getSize(), invader.getSize());
+            } else if (invader.getType() == Invader.InvaderType.TANK) {
+                g2d.setColor(new Color(255, 140, 0, 200));
+                g2d.setStroke(new BasicStroke(3));
+                g2d.drawRect(invader.getX(), invader.getY(), invader.getSize(), invader.getSize());
+                if (invader.getHealth() >= 2) {
+                    // Orange bar above tank showing it still has full health
+                    g2d.setColor(new Color(255, 100, 0, 210));
+                    g2d.fillRect(invader.getX() + 2, invader.getY() - 7, invader.getSize() - 4, 5);
+                }
+            }
         }
+
+        g2d.setStroke(originalStroke);
     }
 
     public void drawExplosions(Graphics g, SpaceInvadersUI game) {

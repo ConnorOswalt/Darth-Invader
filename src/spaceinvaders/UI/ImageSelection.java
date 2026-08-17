@@ -22,12 +22,10 @@ import org.w3c.dom.NamedNodeMap;
 import org.w3c.dom.Node;
 
 public class ImageSelection {
-    private static final String RICK_INVADER_IMAGE_PATH = "/resources/Shooter/Rick.png";
     private static final String LASER_BEAM_IMAGE_PATH = "/resources/sfx/LAZER.gif";
     private static final String BOSS_IMAGE_PATH = "/resources/Invader/Boss.png";
     private Image shooterImage;
     private Image invaderImage;
-    private Image rickInvaderImage;
     private Image laserBeamImage;
     private Image bossImage;
     private final Map<String, Image> resourceImageCache = new HashMap<>();
@@ -49,13 +47,6 @@ public class ImageSelection {
 
     public Image getInvaderImage() {
         return invaderImage;
-    }
-
-    public Image getRickInvaderImage() {
-        if (rickInvaderImage == null) {
-            rickInvaderImage = loadImageIfPresent(RICK_INVADER_IMAGE_PATH);
-        }
-        return rickInvaderImage;
     }
 
     public Image getLaserBeamImage() {
