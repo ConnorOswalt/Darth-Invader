@@ -4,6 +4,7 @@ import spaceinvaders.DataHandlers.MusicHandler;
 import spaceinvaders.DataHandlers.MenuImplementations.ThemeImplementation;
 import spaceinvaders.GameCalculator;
 import spaceinvaders.ListenerActions;
+import spaceinvaders.ScoringRules;
 import spaceinvaders.scores.LeaderboardPanel;
 import spaceinvaders.scores.ScoreManager;
 import spaceinvaders.characters.Bullet;
@@ -103,6 +104,8 @@ public class SpaceInvadersUI extends JPanel implements KeyListener {
         };
 
     private final Timer repaintTimer;
+    private static final int CALCULATOR_STOP_WAIT_MS = 200;
+    private static final int CALCULATOR_STOP_POLL_MS = 25;
     public ArrayList<Invader> invaders;
     public ArrayList<Bullet> bullets;
     public ArrayList<Explosion> explosions;
@@ -110,8 +113,8 @@ public class SpaceInvadersUI extends JPanel implements KeyListener {
     public List<spaceinvaders.characters.PowerUp> powerUps;
     public List<BossProjectile> bossProjectiles;
     public Random random;
-    public boolean moveLeft, moveRight;
-    public boolean fireHeld;
+    public volatile boolean moveLeft, moveRight;
+    public volatile boolean fireHeld;
     private boolean explosionsEnabled = true;
     private final ListenerActions listenerActions;
     public final ImageSelection imageSelection;
@@ -120,6 +123,7 @@ public class SpaceInvadersUI extends JPanel implements KeyListener {
     private int shooter_height = 60;
     private int shooter_X_Coordinate = 200;
     private GameCalculator gameCalculator;
+    private boolean calculatorRestartPending;
     private MusicHandler musicHandler;
     public static int breakpointcounter = 0;
     private ScoreManager scoreManager;
@@ -131,7 +135,7 @@ public class SpaceInvadersUI extends JPanel implements KeyListener {
     private boolean playerFlashing = false;
     private long playerFlashStartTime = 0;
     private static final long PLAYER_FLASH_DURATION = 300;
-    private boolean gameOver = false;
+    private volatile boolean gameOver = false;
     private boolean deathSoundPlayed = false;
     private boolean deathSoundEnabled = true;
     private boolean deathSoundLooping = false;
@@ -139,8 +143,8 @@ public class SpaceInvadersUI extends JPanel implements KeyListener {
     private String deathExplosionSoundEffectPath;
     private long gameOverFlashStartTime = 0;
     private static final long GAME_OVER_FLASH_DURATION = 500; // Flash for 500ms after game over
-    private boolean paused = false;
-    private boolean gameStarted = false;
+    private volatile boolean paused = false;
+    private volatile boolean gameStarted = false;
     private boolean gameWon = false;
     private boolean sillinessModeEnabled = true;
     private SillyModifier activeSillyModifier = SillyModifier.NONE;
@@ -156,7 +160,11 @@ public class SpaceInvadersUI extends JPanel implements KeyListener {
     private String comboMessage = "";
     private long comboMessageUntilMs = 0;
     private int comboCount = 0;
+    private int highestComboCount = 0;
     private long comboWindowUntilMs = 0;
+    private int shotsFired = 0;
+    private int shotsHit = 0;
+    private long gameStartTimeMs = 0;
     private String currentThemePath;
 
     // Theme integrity checker
@@ -232,8 +240,7 @@ public class SpaceInvadersUI extends JPanel implements KeyListener {
                     repaint();
                     requestFocusInWindow();
                     // Now that UI is initialized, start the game calculator thread
-                    gameCalculator = new GameCalculator(SpaceInvadersUI.this);
-                    gameCalculator.start();
+                    startGameCalculator();
                     scoreManager.start(); // Start the score manager thread
                     removeComponentListener(this); // Remove listener after starting
                 }
@@ -254,6 +261,48 @@ public class SpaceInvadersUI extends JPanel implements KeyListener {
     
     public void setPaused(boolean paused) {
         this.paused = paused;
+    }
+
+    private void startGameCalculator() {
+        if (gameCalculator != null && gameCalculator.isAlive()) {
+            return;
+        }
+
+        gameCalculator = new GameCalculator(this);
+        gameCalculator.start();
+    }
+
+    private boolean stopGameCalculator() {
+        GameCalculator calculator = gameCalculator;
+        if (calculator == null || !calculator.isAlive()) {
+            return true;
+        }
+
+        calculator.stopThread();
+        try {
+            calculator.join(CALCULATOR_STOP_WAIT_MS);
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+            return false;
+        }
+        return !calculator.isAlive();
+    }
+
+    private void restartWhenCalculatorStops() {
+        if (calculatorRestartPending) {
+            return;
+        }
+
+        calculatorRestartPending = true;
+        Timer waitForCalculator = new Timer(CALCULATOR_STOP_POLL_MS, null);
+        waitForCalculator.addActionListener(event -> {
+            if (stopGameCalculator()) {
+                waitForCalculator.stop();
+                calculatorRestartPending = false;
+                restartGame();
+            }
+        });
+        waitForCalculator.start();
     }
 
     @Override
@@ -277,6 +326,7 @@ public class SpaceInvadersUI extends JPanel implements KeyListener {
     // Let's move these methods into a separate PaintUI class
     protected void paintComponent(Graphics g) {
         super.paintComponent(g);
+        synchronized (this) {
         Graphics2D g2d = (Graphics2D) g;
         AffineTransform originalTransform = g2d.getTransform();
 
@@ -346,6 +396,7 @@ public class SpaceInvadersUI extends JPanel implements KeyListener {
         }
 
         drawSillyOverlay(g);
+        }
     }
 
     private void drawSillyOverlay(Graphics g) {
@@ -648,11 +699,24 @@ public class SpaceInvadersUI extends JPanel implements KeyListener {
         }
         comboCount++;
         comboWindowUntilMs = now + 1800;
+        highestComboCount = Math.max(highestComboCount, comboCount);
 
         if (comboCount >= 2) {
             comboMessage = getComboTitle(comboCount) + " x" + comboCount;
             comboMessageUntilMs = now + 1400;
         }
+    }
+
+    public void recordShotFired() {
+        shotsFired++;
+    }
+
+    public void recordShotHit() {
+        shotsHit++;
+    }
+
+    public int getHighestComboCount() {
+        return highestComboCount;
     }
 
     private String getComboTitle(int comboCount) {
@@ -666,9 +730,7 @@ public class SpaceInvadersUI extends JPanel implements KeyListener {
     }
 
     public int getComboMultiplier() {
-        if (comboCount >= 5) return 3;
-        if (comboCount >= 2) return 2;
-        return 1;
+        return ScoringRules.comboMultiplier(comboCount);
     }
 
     public void setDeathSoundEffectPath(String deathSoundEffectPath) {
@@ -976,7 +1038,6 @@ public class SpaceInvadersUI extends JPanel implements KeyListener {
         String restartText = gameWon ? "Press R to play again" : "Press R to restart";
         textWidth = fm.stringWidth(restartText);
         int restartX = (getWidth() - textWidth) / 2;
-        int restartY = (getHeight() + textHeight) / 2 + 115;
 
         // Draw final score
         int finalScore = scoreManager.getCurrentScore();
@@ -1005,6 +1066,29 @@ public class SpaceInvadersUI extends JPanel implements KeyListener {
             g2d.drawString(hsText, hsX, hsY);
         }
 
+        // Run stats: kills, accuracy, survival time, best combo
+        int statY = scoreTextY + (finalScore > 0 && finalScore >= topScore ? 60 : 34);
+        g2d.setFont(new Font("Arial", Font.PLAIN, 16));
+        FontMetrics statsFm = g2d.getFontMetrics();
+        int accuracyPercent = shotsFired > 0 ? Math.min(100, Math.round(100f * shotsHit / shotsFired)) : 0;
+        long survivedSeconds = Math.max(0, gameOverFlashStartTime - gameStartTimeMs) / 1000;
+        String[] statLines = {
+                "Invaders Defeated: " + totalInvaderKills,
+                "Shots Fired: " + shotsFired + "   Accuracy: " + accuracyPercent + "%",
+                String.format("Time Survived: %02d:%02d", survivedSeconds / 60, survivedSeconds % 60),
+                highestComboCount >= 2 ? "Best Combo: x" + highestComboCount : null
+        };
+        for (String line : statLines) {
+            if (line == null) continue;
+            int lineX = (getWidth() - statsFm.stringWidth(line)) / 2;
+            g2d.setColor(new Color(0, 0, 0, 150));
+            g2d.drawString(line, lineX + 1, statY + 1);
+            g2d.setColor(new Color(210, 210, 210));
+            g2d.drawString(line, lineX, statY);
+            statY += 22;
+        }
+        int restartY = statY + 14;
+
         g2d.setFont(new Font("Arial", Font.PLAIN, 24));
         fm = g2d.getFontMetrics();
         
@@ -1018,6 +1102,11 @@ public class SpaceInvadersUI extends JPanel implements KeyListener {
     }
 
     public void restartGame() {
+        if (!stopGameCalculator()) {
+            restartWhenCalculatorStops();
+            return;
+        }
+
         synchronized (this) {
             invaders.clear();
             bullets.clear();
@@ -1048,8 +1137,11 @@ public class SpaceInvadersUI extends JPanel implements KeyListener {
             fakeAchievementMessage = "";
             comboMessage = "";
             comboCount = 0;
+            highestComboCount = 0;
             comboWindowUntilMs = 0;
-            clearTemporaryRickRestore();
+            shotsFired = 0;
+            shotsHit = 0;
+            gameStartTimeMs = System.currentTimeMillis();
             totalInvaderKills = 0;
             difficultyMultiplier = 1.0;
             screenShakeOffsetX = 0;
@@ -1065,8 +1157,7 @@ public class SpaceInvadersUI extends JPanel implements KeyListener {
         // Reset the current score for the new game
         scoreManager.resetScore();
 
-        gameCalculator = new GameCalculator(this);
-        gameCalculator.start();
+        startGameCalculator();
         // Don't restart scoreManager - it's a daemon thread that keeps running
         repaintTimer.start();
 
@@ -1438,6 +1529,7 @@ public class SpaceInvadersUI extends JPanel implements KeyListener {
         promptForPlayerNameIfNeeded();
         gameStarted = true;
         paused = false;
+        gameStartTimeMs = System.currentTimeMillis();
         if (musicHandler != null) {
             if (currentThemeExpectedMusicPath != null && !currentThemeExpectedMusicPath.isBlank()) {
                 musicHandler.selectTrack(currentThemeExpectedMusicPath);

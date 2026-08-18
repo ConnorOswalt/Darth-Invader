@@ -39,14 +39,34 @@ public class ImageSelection {
     private long deathScreenGifDurationMs = 0;
     private boolean deathSkinFadeOut = true;
     private boolean starsBackgroundEnabled;
+    private String shooterImagePath;
+    private String invaderImagePath;
+    private String bulletImagePath;
+    private String backgroundImagePath;
     private final StarsBackgroundPainter starsBackgroundPainter = new StarsBackgroundPainter();
 
     public Image getShooterImage() {
         return shooterImage;
     }
 
+    public String getShooterImagePath() {
+        return shooterImagePath;
+    }
+
     public Image getInvaderImage() {
         return invaderImage;
+    }
+
+    public String getInvaderImagePath() {
+        return invaderImagePath;
+    }
+
+    public String getBulletImagePath() {
+        return bulletImagePath;
+    }
+
+    public String getBackgroundImagePath() {
+        return backgroundImagePath;
     }
 
     public Image getLaserBeamImage() {
@@ -200,6 +220,9 @@ public class ImageSelection {
 
     public void restoreDefaultThemeState(SpaceInvadersUI game) {
         setGameImages();
+        shooterImagePath = null;
+        invaderImagePath = null;
+        bulletImagePath = null;
         bulletImage = null;
         clearBulletGifFrames();
         clearDeathSkinImage();
@@ -211,6 +234,7 @@ public class ImageSelection {
         Image loadedImage = loadImage("shooter", resourcePath);
         if (loadedImage != null) {
             shooterImage = loadedImage;
+            shooterImagePath = resourcePath;
         }
     }
 
@@ -218,6 +242,7 @@ public class ImageSelection {
         Image loadedImage = loadImage("invader", resourcePath);
         if (loadedImage != null) {
             invaderImage = loadedImage;
+            invaderImagePath = resourcePath;
         }
     }
 
@@ -225,6 +250,7 @@ public class ImageSelection {
         Image loadedImage = loadImage("bullet", resourcePath);
         if (loadedImage != null) {
             bulletImage = loadedImage;
+            bulletImagePath = resourcePath;
         }
 
         URL url = ImageSelection.class.getResource(resourcePath);
@@ -240,12 +266,14 @@ public class ImageSelection {
         if (loadedImage != null) {
             starsBackgroundEnabled = false;
             backgroundImage = loadedImage;
+            backgroundImagePath = resourcePath;
         }
     }
 
     public void enableStarsBackground(SpaceInvadersUI game) {
         starsBackgroundEnabled = true;
         backgroundImage = null;
+        backgroundImagePath = null;
         starsBackgroundPainter.attachGame(game);
         starsBackgroundPainter.startIfNeeded();
     }

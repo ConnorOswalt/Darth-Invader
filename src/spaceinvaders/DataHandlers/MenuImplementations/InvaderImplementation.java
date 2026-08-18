@@ -1,5 +1,6 @@
 package spaceinvaders.DataHandlers.MenuImplementations;
 
+import spaceinvaders.DataHandlers.PreferencesManager;
 import spaceinvaders.GameExceptions;
 import spaceinvaders.UI.SpaceInvadersUI;
 
@@ -38,11 +39,13 @@ public class InvaderImplementation {
             }
 
             game.imageSelection.setInvaderImageFromResourcePath(normalizedPath);
+            PreferencesManager.saveCurrentSelections(game);
             game.repaint();
             return;
         }
 
         game.imageSelection.setInvaderImageFromResourcePath(selectedPath);
+        PreferencesManager.saveCurrentSelections(game);
         game.repaint();
     }
 

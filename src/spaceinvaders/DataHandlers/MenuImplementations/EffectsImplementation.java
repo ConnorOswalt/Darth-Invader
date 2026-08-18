@@ -1,5 +1,6 @@
 package spaceinvaders.DataHandlers.MenuImplementations;
 
+import spaceinvaders.DataHandlers.PreferencesManager;
 import spaceinvaders.UI.SpaceInvadersUI;
 
 import java.awt.event.ActionEvent;
@@ -21,11 +22,13 @@ public class EffectsImplementation {
 
         if ("enable_explosions".equals(command)) {
             game.setExplosionsEnabled(true);
+            PreferencesManager.saveCurrentSelections(game);
             return;
         }
 
         if ("disable_explosions".equals(command)) {
             game.setExplosionsEnabled(false);
+            PreferencesManager.saveCurrentSelections(game);
         }
     }
 }

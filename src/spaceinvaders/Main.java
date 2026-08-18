@@ -1,13 +1,18 @@
 package spaceinvaders;
 
-import spaceinvaders.scores.LeaderboardPanel;
-import spaceinvaders.UI.SpaceInvadersUI;
-import javax.swing.JFrame;
+import java.awt.GraphicsEnvironment;
 import javax.swing.*;
+import spaceinvaders.UI.SpaceInvadersUI;
+import spaceinvaders.scores.LeaderboardPanel;
 
 
 public class Main {
     public static void main(String[] args) {
+        if (GraphicsEnvironment.isHeadless()) {
+            System.err.println("Darth Invaders requires a graphical display. Run it locally or configure an X11 display.");
+            return;
+        }
+
         SwingUtilities.invokeLater(() -> {
             JFrame frame = new JFrame("Darth Invaders");
             SpaceInvadersUI game = new SpaceInvadersUI();

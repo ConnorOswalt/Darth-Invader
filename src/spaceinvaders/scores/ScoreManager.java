@@ -104,20 +104,18 @@ public class ScoreManager extends Thread {
      * @param score the score to save
      */
     private synchronized void performSaveScore(String playerName, int score) {
-        // Add new score entry with the provided score
-        ScoreEntry newEntry = new ScoreEntry(playerName, score);
-        leaderboard.add(newEntry);
+        leaderboard = rankScores(leaderboard, new ScoreEntry(playerName, score));
         
-        // Sort by score descending
-        leaderboard.sort((a, b) -> Integer.compare(b.getScore(), a.getScore()));
-        
-        // Keep only top 10 entries
-        if (leaderboard.size() > 10) {
-            leaderboard = new ArrayList<>(leaderboard.subList(0, 10));
-        }
-        
-        // Write to file (I/O operation done on this thread)
         fileHandler.saveScores(leaderboard);
+    }
+
+    static List<ScoreEntry> rankScores(List<ScoreEntry> existingScores, ScoreEntry newScore) {
+        List<ScoreEntry> rankedScores = new ArrayList<>(existingScores);
+        rankedScores.add(newScore);
+        rankedScores.sort((first, second) -> Integer.compare(second.getScore(), first.getScore()));
+        return rankedScores.size() <= 10
+                ? rankedScores
+                : new ArrayList<>(rankedScores.subList(0, 10));
     }
 
     /**

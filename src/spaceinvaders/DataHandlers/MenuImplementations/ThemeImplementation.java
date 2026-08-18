@@ -1,5 +1,6 @@
 package spaceinvaders.DataHandlers.MenuImplementations;
 
+import spaceinvaders.DataHandlers.PreferencesManager;
 import spaceinvaders.GameExceptions;
 import spaceinvaders.UI.SpaceInvadersUI;
 
@@ -135,6 +136,8 @@ public class ThemeImplementation {
             game.clearDeathExplosionSoundEffectPath();
             game.setDeathSoundEnabled(true);
             game.setDeathSoundLooping(false);
+            // Re-layer the player's saved cosmetic choices on top of the restored defaults
+            PreferencesManager.applySavedCosmeticPreferences(game);
         }
 
         applyImagePath(game, jsonContent, "shooter", game.imageSelection::setShooterImageFromResourcePath);

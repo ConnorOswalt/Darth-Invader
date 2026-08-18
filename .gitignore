@@ -1,12 +1,10 @@
 
+.DS_Store
 src/.DS_Store
 
-.DS_Store
-
 *.class
-scores.txt
-.gitignore
-scores.txt
-scores.txt
-.gitignore
+build/
+dist/
+
+# Legacy local leaderboard file; the game now stores scores under %APPDATA%/~/.darth-invader
 scores.txt

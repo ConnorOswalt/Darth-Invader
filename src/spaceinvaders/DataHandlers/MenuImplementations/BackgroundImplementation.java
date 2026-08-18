@@ -1,5 +1,6 @@
 package spaceinvaders.DataHandlers.MenuImplementations;
 
+import spaceinvaders.DataHandlers.PreferencesManager;
 import spaceinvaders.GameExceptions;
 import spaceinvaders.UI.SpaceInvadersUI;
 
@@ -25,6 +26,7 @@ public class BackgroundImplementation {
 
         if (STARS_BACKGROUND_OPTION.equals(selectedPath)) {
             game.imageSelection.enableStarsBackground(game);
+            PreferencesManager.saveCurrentSelections(game);
             game.repaint();
             return;
         }
@@ -45,11 +47,13 @@ public class BackgroundImplementation {
             }
 
             game.imageSelection.setBackgroundImageFromResourcePath(normalizedPath);
+            PreferencesManager.saveCurrentSelections(game);
             game.repaint();
             return;
         }
 
         game.imageSelection.setBackgroundImageFromResourcePath(selectedPath);
+        PreferencesManager.saveCurrentSelections(game);
         game.repaint();
     }
 

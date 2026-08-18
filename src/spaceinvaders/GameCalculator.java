@@ -78,34 +78,31 @@ public class GameCalculator extends Thread {
     }
 
     private void updateGameState() {
-        game.checkThemeIntegrity();
-        game.updateScreenShake();
+        synchronized (game) {
+            game.checkThemeIntegrity();
+            game.updateScreenShake();
 
-        if (!game.hasGameStarted()) {
-            return;
+            if (!game.hasGameStarted() || game.isPaused()) {
+                return;
+            }
+            updateSillyModeState();
+
+            updateShooterPosition();
+            handleShooting();
+            updateInvaderPositions();
+            updateBossPositions();
+            updateBossAttacks();
+            updateBulletPositions();
+            updateBossProjectilePositions();
+            checkCollisions();
+            checkBossCollisions();
+            updateExplosions();
+            updateDeathEffects();
+            spawnNewInvaders();
+            spawnPowerUp();
+            updatePowerUpPositions();
+            checkPowerUpCollection();
         }
-
-        // Skip game updates if paused
-        if (game.isPaused()) {
-            return;
-        }
-        updateSillyModeState();
-
-        updateShooterPosition();
-        handleShooting();
-        updateInvaderPositions();
-        updateBossPositions();
-        updateBossAttacks();
-        updateBulletPositions();
-        updateBossProjectilePositions();
-        checkCollisions();
-        checkBossCollisions();
-        updateExplosions();
-        updateDeathEffects();
-        spawnNewInvaders();
-        spawnPowerUp();
-        updatePowerUpPositions();
-        checkPowerUpCollection();
     }
 
     private void updateSillyModeState() {
@@ -234,6 +231,7 @@ public class GameCalculator extends Thread {
                 case LASER_BEAM -> fireLaserBeam(shooterX, shooterWidth, baseX, now);
                 default -> game.bullets.add(new Bullet(baseX, baseY, 0));
             }
+            game.recordShotFired();
             lastFireTimeMs = now;
         }
     }
@@ -253,11 +251,11 @@ public class GameCalculator extends Thread {
             if (beamRect.intersects(invaderRect)) {
                 addExplosionForInvader(inv);
                 it.remove();
+                game.recordShotHit();
                 game.recordInvaderDefeatCombo();
                 game.recordInvaderKill();
                 boolean isTinyPanic = game.getActiveSillyModifier() == SpaceInvadersUI.SillyModifier.TINY_PANIC;
-                int basePoints = inv.getType() == Invader.InvaderType.TANK
-                        ? (isTinyPanic ? 50 : 25) : (isTinyPanic ? 20 : 10);
+                int basePoints = ScoringRules.basePointsForInvaderKill(inv.getType(), isTinyPanic);
                 game.addPoints(basePoints * game.getComboMultiplier());
             }
         }
@@ -267,6 +265,7 @@ public class GameCalculator extends Thread {
         while (bossIt.hasNext()) {
             Boss boss = bossIt.next();
             if (beamRect.intersects(new Rectangle(boss.getX(), boss.getY(), boss.getSize(), boss.getSize()))) {
+                game.recordShotHit();
                 boss.takeDamage(boss.getMaxHealth()); // Laser one-shots the boss
                 addExplosionForBoss(boss);
                 bossIt.remove();
@@ -405,6 +404,7 @@ public class GameCalculator extends Thread {
                     if (new Rectangle(bullet.getX() - 5, bullet.getY(), 10, 10).intersects(
                             new Rectangle(invader.getX(), invader.getY(), invader.getSize(),
                                     invader.getSize()))) {
+                        game.recordShotHit();
                         if (invader.getType() == Invader.InvaderType.TANK && invader.getHealth() > 1) {
                             // Damage tank but don't destroy yet
                             invader.damage();
@@ -424,8 +424,7 @@ public class GameCalculator extends Thread {
                             game.recordInvaderDefeatCombo();
                             game.recordInvaderKill();
                             boolean isTinyPanic = game.getActiveSillyModifier() == SpaceInvadersUI.SillyModifier.TINY_PANIC;
-                            int basePoints = invader.getType() == Invader.InvaderType.TANK
-                                    ? (isTinyPanic ? 50 : 25) : (isTinyPanic ? 20 : 10);
+                            int basePoints = ScoringRules.basePointsForInvaderKill(invader.getType(), isTinyPanic);
                             game.addPoints(basePoints * game.getComboMultiplier());
                             if (!bullet.isPiercing()) break;
                         }
@@ -650,6 +649,7 @@ public class GameCalculator extends Thread {
                     Boss boss = bossIterator.next();
                     if (new Rectangle(bullet.getX() - 5, bullet.getY(), 10, 10).intersects(
                             new Rectangle(boss.getX(), boss.getY(), boss.getSize(), boss.getSize()))) {
+                        game.recordShotHit();
                         boss.takeDamage(1);
                         if (!bullet.isPiercing()) {
                             bulletIterator.remove();
@@ -722,6 +722,7 @@ public class GameCalculator extends Thread {
 
     public void stopThread() {
         running = false;
+        interrupt();
     }
 
     // ----------------------------- Power-up lifecycle ---------------------------

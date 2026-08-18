@@ -1,5 +1,6 @@
 package spaceinvaders.DataHandlers.MenuImplementations;
 
+import spaceinvaders.DataHandlers.PreferencesManager;
 import spaceinvaders.GameExceptions;
 import spaceinvaders.UI.SpaceInvadersUI;
 
@@ -37,11 +38,13 @@ public class BulletImplementation {
             }
 
             game.imageSelection.setBulletImageFromResourcePath(normalizedPath);
+            PreferencesManager.saveCurrentSelections(game);
             game.repaint();
             return;
         }
 
         game.imageSelection.setBulletImageFromResourcePath(selectedPath);
+        PreferencesManager.saveCurrentSelections(game);
         game.repaint();
     }
 

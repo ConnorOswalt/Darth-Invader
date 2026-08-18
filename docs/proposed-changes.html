@@ -1,0 +1,106 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <title>Darth Invaders - Proposed Changes</title>
+  <style>
+    @page { margin: 18mm; }
+    * { box-sizing: border-box; }
+    body {
+      color: #18232b;
+      font-family: Georgia, "Times New Roman", serif;
+      font-size: 11pt;
+      line-height: 1.45;
+      margin: 0;
+    }
+    h1, h2, h3 { color: #1f4968; font-family: Arial, Helvetica, sans-serif; }
+    h1 { border-bottom: 3px solid #d08032; font-size: 25pt; margin: 0 0 6px; padding-bottom: 8px; }
+    h2 { border-bottom: 1px solid #b7c8d4; font-size: 16pt; margin: 24px 0 8px; padding-bottom: 4px; }
+    h3 { font-size: 12pt; margin: 17px 0 5px; }
+    p { margin: 6px 0 10px; }
+    .subtitle { color: #51636f; font-family: Arial, Helvetica, sans-serif; margin: 0 0 20px; }
+    .notice { background: #eef5f8; border-left: 4px solid #287a9e; margin: 14px 0; padding: 10px 13px; }
+    .priority { color: #8d4d10; font-family: Arial, Helvetica, sans-serif; font-size: 9pt; font-weight: bold; text-transform: uppercase; }
+    code { background: #edf1f3; font-family: "Courier New", monospace; font-size: 9.5pt; padding: 1px 3px; }
+    ul { margin: 5px 0 10px; padding-left: 22px; }
+    li { margin: 4px 0; }
+    table { border-collapse: collapse; font-family: Arial, Helvetica, sans-serif; font-size: 9.5pt; margin: 10px 0; width: 100%; }
+    th { background: #1f4968; color: white; text-align: left; }
+    td, th { border: 1px solid #b7c8d4; padding: 7px; vertical-align: top; }
+    tr:nth-child(even) { background: #f5f8fa; }
+    .footer { color: #60737f; font-family: Arial, Helvetica, sans-serif; font-size: 8.5pt; margin-top: 28px; }
+  </style>
+</head>
+<body>
+  <h1>Darth Invaders</h1>
+  <p class="subtitle">Proposed Changes - Documentation Only - 17 August 2026</p>
+
+  <div class="notice">
+    <strong>Scope:</strong> This is an implementation proposal based on a focused inspection of the startup path, game loop, input handling, score persistence, and project documentation. It does not modify the application.
+  </div>
+
+  <h2>Executive Summary</h2>
+  <p>The game has a clear split between Swing rendering/input and a dedicated game-calculation thread. The first changes should make that split safe and predictable across restart, then make persistence and onboarding reliable. Feature work should follow only after those foundations are covered by automated checks.</p>
+
+  <table>
+    <thead><tr><th>Priority</th><th>Change</th><th>Reason</th><th>Acceptance Check</th></tr></thead>
+    <tbody>
+      <tr><td>P0</td><td>Manage calculator-thread shutdown and restart explicitly</td><td>Prevents overlapping or unfinished update loops during repeated restarts.</td><td>After 50 game-over/restart cycles, exactly one live <code>GameCalculator-Thread</code> is present and game speed remains stable.</td></tr>
+      <tr><td>P0</td><td>Define ownership of mutable game state</td><td>Rendering, input, and calculation run on different threads while sharing lists and flags.</td><td>A concurrency stress test runs for 10 minutes with no concurrent-modification exceptions, stale-input behavior, or hangs.</td></tr>
+      <tr><td>P1</td><td>Use an application data directory for scores</td><td><code>scores.txt</code> currently depends on the process working directory.</td><td>Scores save and reload after launching the game from a shortcut, IDE, and a different working directory.</td></tr>
+      <tr><td>P1</td><td>Document setup, controls, and assets</td><td>The current README only contains the project name.</td><td>A new contributor can build, run, and locate player data using README instructions alone.</td></tr>
+      <tr><td>P2</td><td>Add small automated tests around non-UI rules</td><td>Scoring, persistence, and timing rules are currently hard to validate safely.</td><td>Tests cover score parsing, ranking limits, power-up expiry, and score/combo calculations.</td></tr>
+    </tbody>
+  </table>
+
+  <h2>Recommended Changes</h2>
+
+  <h3><span class="priority">P0</span> 1. Make GameCalculator lifecycle deterministic</h3>
+  <p><strong>Observed path.</strong> <code>SpaceInvadersUI.setGameOver</code> asks the current calculator to stop. <code>SpaceInvadersUI.restartGame</code> immediately creates and starts a new calculator. The inspected restart path does not wait for the previous worker to finish or clear its reference before replacement.</p>
+  <p><strong>Proposed implementation.</strong> Give the worker a bounded shutdown contract: signal cancellation, interrupt its wait, and join it before a replacement is started. Keep creation and replacement in one lifecycle method so the panel can never own two workers. Make restart idempotent while a restart is already in progress.</p>
+  <p><strong>Why first.</strong> A lingering loop can update the new game state at the same time as the new loop, causing inconsistent movement, collision handling, spawns, or score changes.</p>
+  <ul>
+    <li>Start the calculator once after the panel is initialized.</li>
+    <li>On game over, stop the worker without blocking the Swing event-dispatch thread for an unbounded time.</li>
+    <li>On restart, verify the prior worker has exited before starting a replacement.</li>
+    <li>Expose a package-private lifecycle seam so this behavior can be tested without rendering a window.</li>
+  </ul>
+
+  <h3><span class="priority">P0</span> 2. Establish a thread-ownership model for game state</h3>
+  <p><strong>Observed path.</strong> <code>GameCalculator</code> mutates collections and state on its own thread. Swing painting and key listeners run on the event-dispatch thread. Several collection operations are synchronized on the game panel, but rendering reads and scalar state do not consistently follow one synchronization strategy.</p>
+  <p><strong>Proposed implementation.</strong> Choose one model and apply it consistently. The preferred model is to perform all state mutation on the Swing event-dispatch thread using a single Swing timer; it removes cross-thread ownership for a small arcade game. If the worker remains, use a dedicated immutable render snapshot or a single state lock for all read/write access, and use <code>volatile</code> or equivalent synchronization for cross-thread flags.</p>
+  <p><strong>Decision rule.</strong> Prefer the single Swing-timer model unless profiling shows it cannot hold the target frame rate. The current 20 ms cadence is modest, and the simpler model reduces race-condition risk substantially.</p>
+
+  <h3><span class="priority">P1</span> 3. Make score persistence independent of launch location</h3>
+  <p><strong>Observed path.</strong> <code>ScoreFileHandler</code> opens a relative <code>scores.txt</code>. This means the leaderboard location changes with the current working directory, and a packaged game may write to an unexpected or non-writable directory.</p>
+  <p><strong>Proposed implementation.</strong> Resolve a platform-appropriate user data directory, create it on first use, and store scores there through <code>java.nio.file.Path</code>. Use a temporary file and atomic move when supported so a crash cannot truncate the leaderboard. Keep malformed-row handling, but surface a concise in-game warning when persistence is unavailable.</p>
+
+  <h3><span class="priority">P1</span> 4. Turn the README into a usable project guide</h3>
+  <p><strong>Observed path.</strong> The README provides only the project name, while the application depends on a specific Java runtime and uses resource files relative to the project.</p>
+  <p><strong>Proposed contents.</strong></p>
+  <ul>
+    <li>Java version, compile/run commands, and VS Code launch instructions.</li>
+    <li>Controls: Left/Right, Space, P, R, Enter, and the starter-screen difficulty key.</li>
+    <li>Resource directory expectations and instructions for adding a theme safely.</li>
+    <li>Leaderboard data location and reset procedure.</li>
+    <li>A brief architecture map: UI/input, calculation, audio, scoring, and assets.</li>
+  </ul>
+
+  <h3><span class="priority">P2</span> 5. Add a narrow test foundation before more mechanics</h3>
+  <p>Introduce a standard Java test runner and extract pure rule calculations from UI state where necessary. Begin with score parsing and ordering, score-file recovery, combo multiplier rules, power-up expiration, and difficulty calculations. Avoid pixel-level Swing tests until the game-state boundary is stable.</p>
+
+  <h2>Implementation Sequence</h2>
+  <ol>
+    <li>Write a regression test or diagnostic that proves one active calculator exists after restart.</li>
+    <li>Implement lifecycle shutdown and confirm repeated restart behavior.</li>
+    <li>Adopt the chosen thread-ownership model and run a focused concurrency stress test.</li>
+    <li>Migrate score storage with a one-time fallback import from the legacy project-local file.</li>
+    <li>Add README documentation and tests for persistence and gameplay rules.</li>
+  </ol>
+
+  <h2>Out of Scope for This Pass</h2>
+  <p>New game modes, multiplayer, additional bosses, artwork, and broad visual redesign should wait. They increase the number of moving parts while the current lifecycle and state-sharing risks remain unverified.</p>
+
+  <p class="footer">Evidence reviewed: Main startup configuration, SpaceInvadersUI initialization/game-over/restart paths, GameCalculator loop, ListenerActions input handling, ScoreFileHandler persistence, and README.</p>
+</body>
+</html>
